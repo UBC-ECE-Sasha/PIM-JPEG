@@ -58,20 +58,20 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
     
-    struct jpeg_decompress_struct cinfo;
-	struct jpeg_error_mgr jerr;
-	unsigned char *inbuffer = NULL;
-	JDIMENSION num_scanlines;
+    /*struct jpeg_decompress_struct cinfo;*/
+	/*struct jpeg_error_mgr jerr;*/
+	/*unsigned char *inbuffer = NULL;*/
+	/*JDIMENSION num_scanlines;*/
 
-	/* Initialize the JPEG decompression object with default error handling */       
-	cinfo.err = jpeg_std_error(&jerr);
-	jpeg_create_decompress(&cinfo);
+	/*[> Initialize the JPEG decompression object with default error handling <]       */
+	/*cinfo.err = jpeg_std_error(&jerr);*/
+	/*jpeg_create_decompress(&cinfo);*/
 
-    /* Specify data source for decompression */
-    jpeg_stdio_src(&cinfo, TRUE);
+    /*[> Specify data source for decompression <]*/
+    /*jpeg_stdio_src(&cinfo, TRUE);*/
      
-    /* Read the file header, set default decompression parameters */
-    (void)jpeg_read_header(&cinfo, TRUE);
+    /*[> Read the file header, set default decompression parameters <]*/
+    /*(void)jpeg_read_header(&cinfo, TRUE);*/
 
     /* Now we know the image's height, we can seek to the binary postion where
      * this is written, modify that value, delete any extra lines of data if
@@ -94,7 +94,7 @@ int main(int argc, char **argv)
     size_t total_bytes_read = 0;
     size_t buf_index;
 
-    while (bytes_read = fread(in_buf, char_size, BUFFER_SIZE, input_file) != 0) {
+    while ((bytes_read = fread(in_buf, char_size, BUFFER_SIZE, input_file)) != 0) {
         for (buf_index = 0; buf_index < bytes_read; buf_index++) {
             total_bytes_read += 1;
 
@@ -139,7 +139,7 @@ int main(int argc, char **argv)
    if (buf_index + DISTANCE_TO_LINES_FIELD + 1 > BUFFER_SIZE) {
        /* Edge case. We need to read in another chunk in order to modify the Lines field.. Low priority so we just fail for now */
        fprintf(stderr, "We got unlucky and hit an edge case which wasn't worth handling at the moment. Please try another jpeg input file\n");
-    goto cleanup;
+       goto cleanup;
    }
 
    unsigned short old_lines = in_buf[buf_index + DISTANCE_TO_LINES_FIELD] << 8;
@@ -166,13 +166,14 @@ int main(int argc, char **argv)
    size_t bytes_written = fwrite(tmp_buf, char_size, num_data_to_flush, output_file);
    if (bytes_written != num_data_to_flush) {
        fprintf(stderr, "Failed to write to output file\n");
+       free(tmp_buf);
        goto cleanup;
    } 
 
    /* Write the rest of the input file to the output file */
    /* TODO: Skip writing data that we're not going to use */
 
-    while (bytes_read = fread(in_buf, char_size, BUFFER_SIZE, input_file) != 0) {
+    while ((bytes_read = fread(in_buf, char_size, BUFFER_SIZE, input_file)) != 0) {
         bytes_written = fwrite(in_buf, char_size, bytes_read, output_file);
     }
 
@@ -185,9 +186,6 @@ cleanup:
         free(in_buf);
     }
 
-    if (tmp_buf != NULL) {
-        free(tmp_buf);
-    }
     fclose(input_file);
     fclose(output_file);
     return 0;
