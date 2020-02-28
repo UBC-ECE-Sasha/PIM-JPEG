@@ -58,6 +58,10 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
     
+    /***************************************************************
+     * Attempting to use the jpeg library.. before discarding it. **
+     ***************************************************************/
+    
     /*struct jpeg_decompress_struct cinfo;*/
 	/*struct jpeg_error_mgr jerr;*/
 	/*unsigned char *inbuffer = NULL;*/
