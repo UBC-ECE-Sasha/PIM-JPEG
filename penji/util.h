@@ -45,7 +45,7 @@ unsigned int read_2_bytes(FILE *file)
 
 /*
  * Find the next JPEG marker and store it in marker parameter.
- * Store the number of bytes read inbytes_read.
+ * Add the number of bytes read to bytes_read.
  *
  * NOTE: Do not use this function to after seeing an SOS marker, it will not
  * correctly deal with FF/00 sequences in the compressed image data
