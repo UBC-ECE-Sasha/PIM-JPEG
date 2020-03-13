@@ -43,28 +43,41 @@ int main(int argc, char **argv)
     }
 
     // Print the number of image components in frame
-    read_2_bytes(file);     // length
-    read_1_byte(file);      // Sample Precision
-    read_2_bytes(file);     // Lines
-    read_2_bytes(file);     // Samples per line
-    unsigned int num_image_components = read_1_byte(file);
+    read_2_bytes(file, &bytes_read);     // length
+    read_1_byte(file, &bytes_read);      // Sample Precision
+    read_2_bytes(file, &bytes_read);     // Lines
+    read_2_bytes(file, &bytes_read);     // Samples per line
+    unsigned int num_image_components = read_1_byte(file, &bytes_read);
 
-    bytes_read += 8;
     fprintf(stdout, "Number of image components in frame: %d\n", num_image_components);
 
-    // Find Start of Segment marker
+    // Find Define Huffman Table marker
+    while (marker != DHT_MARKER) {
+        next_marker(file, &bytes_read, &marker);
+    }
+    
+    huffman_table *htable = parse_huffman_table(file, &bytes_read);
+    if (htable == NULL) {
+        fprintf(stderr, "Could not parse Huffman Table");
+        fclose(file);
+        exit(EXIT_FAILURE);
+    }
+
+    print_huffman_table(htable);
+
+    // Find Start of Scan marker
     next_marker(file, &bytes_read, &marker);
     while (marker != SOS_MARKER) {
         next_marker(file, &bytes_read, &marker);
     }
 
-    int header_len = read_2_bytes(file) - 2;
+    int header_len = read_2_bytes(file, &bytes_read) - 2;
     unsigned char scan_header[header_len];
     if ((fread(scan_header, sizeof(unsigned char), header_len, file)) != header_len) {
         ERREXIT("Reached EOF?\n");
     }
 
-    bytes_read += 2 + header_len;
+    bytes_read += header_len;
 
     // We should now be at the start of the ECS block
 }
