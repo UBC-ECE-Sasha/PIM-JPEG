@@ -4,6 +4,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#define TRUE 1
+#define FALSE 0
+
 // Error exit handler
 #define ERREXIT(msg)    (fprintf(stderr, "%s\n", msg), exit(EXIT_FAILURE))
 
@@ -90,6 +93,8 @@ void next_marker(FILE *file, int *bytes_read, unsigned int *marker)
 struct huffman_symbol {
     unsigned char value;
     unsigned char length;
+    unsigned short bitstring;    // This is value we expect to see in the actual
+                                    // ECS data block
     struct huffman_symbol *next;
 };
 
@@ -104,6 +109,83 @@ struct huffman_table {
 
 typedef struct huffman_table huffman_table;
 
+struct dht_tree_node {
+    struct dht_tree_node *left;
+    struct dht_tree_node *right;
+    unsigned char num_bits;
+    unsigned char is_assigned;
+    unsigned short bitstring;
+};
+typedef struct dht_tree_node tree_node;
+
+void tree_node_add_layer(tree_node *root)
+{
+    if (root == NULL) {
+        return;
+    }
+
+    if (root->left == NULL) {
+        tree_node *left = (tree_node *) malloc(sizeof(tree_node));
+        left->num_bits = root->num_bits + 1;
+        left->is_assigned = FALSE;
+        left->bitstring = root->bitstring << 1;
+        left->left = NULL;
+        left->right = NULL;
+        root->left = left;
+    } else {
+        tree_node_add_layer(root->left);
+    }
+
+    if (root->right == NULL) {
+        tree_node *right = (tree_node *) malloc(sizeof(tree_node));
+        right->num_bits = root->num_bits + 1;
+        right->is_assigned = FALSE;
+        right->bitstring = (root->bitstring << 1) + 0x01;
+        right->left = NULL;
+        right->right = NULL;
+        root->right = right;
+    } else {
+        tree_node_add_layer(root->right);
+    }
+}
+
+tree_node* get_available_left_most_node(tree_node *root)
+{
+    if (root == NULL) {
+        return NULL;
+    }
+
+    if (root->is_assigned) {
+        return NULL;
+    }
+
+    if (root->left == NULL && root->right == NULL) {
+        return root;
+    }
+
+    tree_node *result = get_available_left_most_node(root->left);
+    if (result != NULL) {
+        return result;
+    }
+
+    return get_available_left_most_node(root->right);
+}
+
+/**
+ * Cleanup the resources associated with a given huffman table
+ */
+void destroy_huffman_table(huffman_table *table)
+{
+    // TODO: Implement this
+}
+
+/**
+ * Cleanup the resources associated with a given dht tree
+ */
+void destroy_dht_tree(tree_node *root)
+{
+    // TODO: Implement this
+}
 
 /**
  * Create a huffman table from the given file.
@@ -116,6 +198,12 @@ typedef struct huffman_table huffman_table;
 huffman_table* parse_huffman_table(FILE *file, int *bytes_read)
 {
     huffman_table *table = (huffman_table *) malloc(sizeof(huffman_table));
+    tree_node *tree_root = (tree_node *) malloc(sizeof(tree_node));
+    tree_root->left = NULL;
+    tree_root->right = NULL;
+    tree_root->is_assigned = FALSE;
+    tree_root->bitstring = 0;
+    tree_root->num_bits = 0;
 
     unsigned short table_length = read_2_bytes(file, bytes_read); 
     unsigned char tc_th = read_1_byte(file, bytes_read);
@@ -133,19 +221,25 @@ huffman_table* parse_huffman_table(FILE *file, int *bytes_read)
 
     // Read the symbols associated with each length
     for (int index = 0; index < 16; index++) {
+        tree_node_add_layer(tree_root);
         int frequency = table->frequencies[index];
         huffman_symbol *current_symbol = NULL;
         for (int count = 0; count < frequency; count++) {
+            tree_node *available_node = get_available_left_most_node(tree_root);
+            available_node->is_assigned = TRUE;
+
             unsigned char value = read_1_byte(file, bytes_read);
             if (count == 0) {
                 table->symbols[index].value = value;
                 table->symbols[index].length = index + 1;
                 table->symbols[index].next = NULL;
+                table->symbols[index].bitstring = available_node->bitstring;
             } else {
                 huffman_symbol *new_symbol = (huffman_symbol *) malloc(sizeof(huffman_symbol));
                 new_symbol->value = value;
                 new_symbol->length = index + 1;
                 new_symbol->next = NULL;
+                new_symbol->bitstring = available_node->bitstring;
 
                 if (count == 1) {
                     table->symbols[index].next = new_symbol;
@@ -157,6 +251,7 @@ huffman_table* parse_huffman_table(FILE *file, int *bytes_read)
         }
     }
 
+    destroy_dht_tree(tree_root);
     return table;
 }
 
@@ -186,14 +281,6 @@ void print_huffman_table(huffman_table *table)
         }
         printf("\n");
     }
-}
-
-/**
- * Cleanup the resources associated with a given huffman table
- */
-void destroy_huffman_table(huffman_table *table)
-{
-    // TODO: Implement this
 }
 
 
