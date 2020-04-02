@@ -23,6 +23,116 @@ void print_usage(void)
     fprintf(stderr, "usage: mcu_block_counter <inputfile>\n");
 }
 
+huffman_symbol* find_hufftable_entry(huffman_table *table, unsigned short *scan_buf, unsigned char *valid_buf_bits)
+{
+    unsigned char available_codes = table->frequencies[*valid_buf_bits];
+    if (available_codes == 0) {
+        return NULL;
+    }
+
+    huffman_symbol *result = &table->symbols[*valid_buf_bits];
+    for (unsigned char i = 0; i < available_codes; i++) {
+        if (result->bitstring == *scan_buf) {
+            break;
+        } 
+        result = result->next;
+    }
+
+    return result;
+}
+
+void add_bit_to_scan_buf(unsigned short *scan_buf, unsigned char *valid_buf_bits, unsigned char *input_data, unsigned char *input_data_bit_index)
+{
+    *scan_buf = (*scan_buf << 1) + ((*input_data >> (3 - *input_data_bit_index)) & 0x01); 
+    *input_data_bit_index += 1;
+    *valid_buf_bits += 1;
+    if (*input_data_bit_index > 3) {
+        *input_data = read_1_byte(file, &bytes_read);
+        *input_data_bit_index = 0;
+    }    
+}
+
+void input_data_skip_bits(unsigned char *input_data, unsigned char *input_data_bit_index, unsigned short nbits)
+{
+    if (nbits > (3 - *input_data_bit_index)) {
+        *input_data = 0;
+        nbits -= 3 - *input_data_bit_index;
+        *input_data_bit_index = 0;
+    } else {
+        *input_data_bit_index += nbits;
+    }
+
+    while (nbits > 0) {
+        if (nbits >= 8) {
+            read_2_bytes(file, &bytes_read);
+            nbits -= 8;
+            continue;
+        }
+
+        if (nbits >= 4) {
+            read_1_byte(file, &bytes_read);
+            nbits -= 4;
+            continue;
+        }
+
+        *input_data = read_1_byte(file, &bytes_read);
+        *input_data_bit_index = nbits;
+    }
+}
+
+void process_mcu(huffman_table *dc_table, huffman_table *ac_table,
+        unsigned short *scan_buf, unsigned char *valid_buf_bits, unsigned char *input_data, unsigned char *input_data_bit_index)
+{
+
+    // First, we obtain a value from the DC table
+    while (*valid_buf_bits <= 16) {
+        huffman_symbol *huffsymbol = find_hufftable_entry(dc_table, scan_buf, valid_buf_bits);
+        if (huffsymbol == NULL) {
+            add_bit_to_scan_buf(scan_buf, valid_buf_bits, input_data, input_data_bit_index);
+            continue;
+        } 
+
+        scan_buf = 0;
+        valid_buf_bits = 0;
+
+        if (huffsymbol->value == 0) {
+            // Reached EOB
+            break;
+        }
+
+        input_data_skip_bits(input_data, input_data_bit_index, huffsymbol->value);
+        break;
+    } 
+
+    // Now we obtain the 1-63 values for the AC table
+    for (int i = 1; i < 64; i++) {
+        unsigned char reached_eob = FALSE;
+        while (*valid_buf_bits <= 16) {
+            huffman_symbol *huffsymbol = find_hufftable_entry(ac_table, scan_buf, valid_buf_bits);
+            if (huffsymbol == NULL) {
+                add_bit_to_scan_buf(scan_buf, valid_buf_bits, input_data, input_data_bit_index);
+                continue;
+            } 
+
+            scan_buf = 0;
+            valid_buf_bits = 0;
+
+            if (huffsymbol->value == 0) {
+                // Reached EOB
+                reached_eob = TRUE;
+                break;
+            }
+
+            input_data_skip_bits(input_data, input_data_bit_index, huffsymbol->value);
+            break;
+        } 
+
+        if (reached_eob == TRUE) {
+            break;
+        }
+    }
+}
+
 void process_scan(huffman_table *dc_table, huffman_table *ac_table)
 {
     printf("Processing Scan ");
@@ -44,6 +154,24 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
      * code (starting from the shortest length) to the current data buffer
      * and see what sticks.
      */
+    unsigned short scan_buf = 0;
+    unsigned char valid_buf_bits = 0;
+    unsigned char input_data = read_1_byte(file, &bytes_read);
+    unsigned char input_data_bit_index = 0;
+
+    add_bit_to_scan_buf(&scan_buf, &valid_buf_bits, &input_data, &input_data_bit_index);
+
+    long mcu_counter = 0;
+    while(!feof(file)) {
+        //TODO: Figure out a different way to stop...
+        process_mcu(dc_table, ac_table,&scan_buf, &valid_buf_bits, &input_data, &input_data_bit_index);
+        mcu_counter++;
+        if (mcu_counter % 80 == 0) {
+            fprintf(stdout, "Progress: Found %d MCUs so far\n", mcu_counter);
+        }
+    }
+
+    fprintf(stdout, "Finished processing MCUs. Found %d MCU blocks\n", mcu_counter);
 }
 
 void process_frame()
