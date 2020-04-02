@@ -14,6 +14,13 @@
 #define EOI_MARKER 0xFFD9   /* End of Image */
 #define DHT_MARKER 0xFFC4   /* Define Huffman Table */
 
+// Huffman table classes
+#define HUFF_TABLE_DC 0
+#define HUFF_TABLE_AC 1
+
+// Huffman End Of Block Code
+#define HUFF_CODE_EOB 0x00
+
 // Reading file input
 unsigned int read_1_byte(FILE *file, int *bytes_read)
 {
@@ -44,6 +51,12 @@ unsigned int read_2_bytes(FILE *file, int *bytes_read)
     ret = c1 << 8;
     ret = ret + c2;
     return ret; 
+}
+
+void print_file_offset(FILE *file)
+{
+    long offset = ftell(file);
+    printf("File position: 0x%05x\n", offset);
 }
 
 /*
@@ -85,6 +98,8 @@ typedef struct huffman_symbol huffman_symbol;
 struct huffman_table {
     unsigned char frequencies[16];  /* frequencies table */
     huffman_symbol symbols[16];     /* List of linked list of symbols */
+    unsigned char table_class;
+    unsigned char destination_identifier;
 };
 
 typedef struct huffman_table huffman_table;
@@ -103,7 +118,12 @@ huffman_table* parse_huffman_table(FILE *file, int *bytes_read)
     huffman_table *table = (huffman_table *) malloc(sizeof(huffman_table));
 
     unsigned short table_length = read_2_bytes(file, bytes_read); 
-    read_1_byte(file, bytes_read);
+    unsigned char tc_th = read_1_byte(file, bytes_read);
+    unsigned char table_class = tc_th >> 4;
+    unsigned char destination_id = tc_th & 0x0F;
+
+    table->table_class = table_class;
+    table->destination_identifier = destination_id;
 
     // Read through the frequency values
     for (int index = 0; index < 16; index++) {
