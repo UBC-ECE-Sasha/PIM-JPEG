@@ -289,5 +289,27 @@ void print_huffman_table(huffman_table *table)
     }
 }
 
+void print_huffman_bitstrings(huffman_table *table)
+{
+    printf("Expanded Form of Codes:\n");
+    for (int index = 0; index < 16; index++) {
+        int frequency = table->frequencies[index];
+        if (frequency == 0) {
+            continue;
+        }
+        printf("Codes of length %d bits:\n", index + 1);
+        huffman_symbol *current_symbol;
+        for (int count = 0; count < frequency; count++) {
+            if (count == 0) {
+                current_symbol = &table->symbols[index];
+            } else {
+                current_symbol = current_symbol->next;
+            }
+
+            printf("0x%02x = 0x%02x\n ", current_symbol->bitstring, current_symbol->value);
+        }
+        
+    }
+}
 
 #endif /* UTIL_H */

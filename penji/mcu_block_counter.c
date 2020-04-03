@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "util.h"
+#include <assert.h>
 
 
 FILE *file;
@@ -25,10 +26,12 @@ void print_usage(void)
 
 huffman_symbol* find_hufftable_entry(huffman_table *table, unsigned short *scan_buf, unsigned char *valid_buf_bits)
 {
-    unsigned char len_index = *valid_buf_bits - 1;
-    if (len_index < 0) {
+    if (*valid_buf_bits == 0) {
         return NULL;
     }
+
+    unsigned char len_index = *valid_buf_bits - 1;
+    assert (len_index >= 0 && len_index < 16);
 
     unsigned char available_codes = table->frequencies[len_index];
     if (available_codes == 0) {
@@ -59,12 +62,18 @@ void add_bit_to_scan_buf(unsigned short *scan_buf, unsigned char *valid_buf_bits
 
 void input_data_skip_bits(unsigned char *input_data, unsigned char *input_data_bit_index, unsigned short nbits)
 {
-    if (nbits > (7 - *input_data_bit_index)) {
+    if (nbits > (8 - *input_data_bit_index)) {
         *input_data = 0;
-        nbits -= 7 - *input_data_bit_index;
+        nbits -= 8 - *input_data_bit_index;
+        *input_data_bit_index = 0;
+    } else if (nbits == (8 - *input_data_bit_index)) {
+        *input_data = 0;
+        nbits = 0;
+        *input_data = read_1_byte(file, &bytes_read);
         *input_data_bit_index = 0;
     } else {
         *input_data_bit_index += nbits;
+        nbits = 0;
     }
 
     while (nbits > 0) {
@@ -106,10 +115,15 @@ void process_mcu(huffman_table *dc_table, huffman_table *ac_table,
             break;
         }
 
+        assert ((huffsymbol->value & 0xF0) == 0);
         input_data_skip_bits(input_data, input_data_bit_index, huffsymbol->value);
         break;
     } 
 
+    assert (*valid_buf_bits <= 16);
+
+    int mcu_indices[64];
+    int mcu_indices_len = 0;
     // Now we obtain the 1-63 values for the AC table
     for (int i = 1; i < 64; i++) {
         unsigned char reached_eob = FALSE;
@@ -126,10 +140,30 @@ void process_mcu(huffman_table *dc_table, huffman_table *ac_table,
             if (huffsymbol->value == 0) {
                 // Reached EOB
                 reached_eob = TRUE;
+                mcu_indices[mcu_indices_len++] = i;
                 break;
             }
 
-            input_data_skip_bits(input_data, input_data_bit_index, huffsymbol->value);
+            if (huffsymbol->value == 0xF0) {
+                // Found ZRL
+                // TODO: Potential off-by-one-error
+                // TODO: Might even still need to skip data bits
+                i += 16;
+                assert (i < 64);
+                break;
+            }
+
+            unsigned char runlen = huffsymbol->value >> 4;
+            unsigned char skipbits = huffsymbol->value & 0x0F; 
+
+            assert (runlen < 16);
+            i += runlen;
+            if (i >= 64) {
+                fprintf(stderr, "WARNING: value of i is %d\n", i);
+            }
+            /*assert (i < 64);*/
+            input_data_skip_bits(input_data, input_data_bit_index, skipbits);
+            mcu_indices[mcu_indices_len++] = i;
             break;
         } 
 
@@ -137,6 +171,12 @@ void process_mcu(huffman_table *dc_table, huffman_table *ac_table,
             break;
         }
     }
+
+    printf("MCU indices: [");
+    for (int j = 0; j < mcu_indices_len; j++) {
+        printf("%d, ", mcu_indices[j]);
+    }
+    printf("]\n");
 }
 
 void process_scan(huffman_table *dc_table, huffman_table *ac_table)
@@ -214,6 +254,7 @@ void process_frame()
 
     /*printf("DC table:\n");*/
     /*print_huffman_table(dc_htable);*/
+    /*print_huffman_bitstrings(dc_htable);*/
 
     // Find Define Huffman Table marker for AC table
     next_marker(file, &bytes_read, &marker);
@@ -232,6 +273,7 @@ void process_frame()
 
     /*printf("AC table:\n");*/
     /*print_huffman_table(ac_htable);*/
+    /*print_huffman_bitstrings(ac_htable);*/
     
     // Find Start of Scan marker
     next_marker(file, &bytes_read, &marker);
