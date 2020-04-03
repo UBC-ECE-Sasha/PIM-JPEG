@@ -25,12 +25,17 @@ void print_usage(void)
 
 huffman_symbol* find_hufftable_entry(huffman_table *table, unsigned short *scan_buf, unsigned char *valid_buf_bits)
 {
-    unsigned char available_codes = table->frequencies[*valid_buf_bits];
+    unsigned char len_index = *valid_buf_bits - 1;
+    if (len_index < 0) {
+        return NULL;
+    }
+
+    unsigned char available_codes = table->frequencies[len_index];
     if (available_codes == 0) {
         return NULL;
     }
 
-    huffman_symbol *result = &table->symbols[*valid_buf_bits];
+    huffman_symbol *result = &table->symbols[len_index];
     for (unsigned char i = 0; i < available_codes; i++) {
         if (result->bitstring == *scan_buf) {
             break;
@@ -43,10 +48,10 @@ huffman_symbol* find_hufftable_entry(huffman_table *table, unsigned short *scan_
 
 void add_bit_to_scan_buf(unsigned short *scan_buf, unsigned char *valid_buf_bits, unsigned char *input_data, unsigned char *input_data_bit_index)
 {
-    *scan_buf = (*scan_buf << 1) + ((*input_data >> (3 - *input_data_bit_index)) & 0x01); 
+    *scan_buf = (*scan_buf << 1) + ((*input_data >> (7 - *input_data_bit_index)) & 0x01); 
     *input_data_bit_index += 1;
     *valid_buf_bits += 1;
-    if (*input_data_bit_index > 3) {
+    if (*input_data_bit_index > 7) {
         *input_data = read_1_byte(file, &bytes_read);
         *input_data_bit_index = 0;
     }    
@@ -54,29 +59,30 @@ void add_bit_to_scan_buf(unsigned short *scan_buf, unsigned char *valid_buf_bits
 
 void input_data_skip_bits(unsigned char *input_data, unsigned char *input_data_bit_index, unsigned short nbits)
 {
-    if (nbits > (3 - *input_data_bit_index)) {
+    if (nbits > (7 - *input_data_bit_index)) {
         *input_data = 0;
-        nbits -= 3 - *input_data_bit_index;
+        nbits -= 7 - *input_data_bit_index;
         *input_data_bit_index = 0;
     } else {
         *input_data_bit_index += nbits;
     }
 
     while (nbits > 0) {
-        if (nbits >= 8) {
+        if (nbits >= 16) {
             read_2_bytes(file, &bytes_read);
-            nbits -= 8;
+            nbits -= 16;
             continue;
         }
 
-        if (nbits >= 4) {
+        if (nbits >= 8) {
             read_1_byte(file, &bytes_read);
-            nbits -= 4;
+            nbits -= 8;
             continue;
         }
 
         *input_data = read_1_byte(file, &bytes_read);
         *input_data_bit_index = nbits;
+        nbits = 0;
     }
 }
 
@@ -92,8 +98,8 @@ void process_mcu(huffman_table *dc_table, huffman_table *ac_table,
             continue;
         } 
 
-        scan_buf = 0;
-        valid_buf_bits = 0;
+        *scan_buf = 0;
+        *valid_buf_bits = 0;
 
         if (huffsymbol->value == 0) {
             // Reached EOB
@@ -114,8 +120,8 @@ void process_mcu(huffman_table *dc_table, huffman_table *ac_table,
                 continue;
             } 
 
-            scan_buf = 0;
-            valid_buf_bits = 0;
+            *scan_buf = 0;
+            *valid_buf_bits = 0;
 
             if (huffsymbol->value == 0) {
                 // Reached EOB
@@ -206,8 +212,8 @@ void process_frame()
         exit(EXIT_FAILURE);
     }
 
-    printf("DC table:\n");
-    print_huffman_table(dc_htable);
+    /*printf("DC table:\n");*/
+    /*print_huffman_table(dc_htable);*/
 
     // Find Define Huffman Table marker for AC table
     next_marker(file, &bytes_read, &marker);
@@ -224,8 +230,8 @@ void process_frame()
         exit(EXIT_FAILURE);
     }
 
-    printf("AC table:\n");
-    print_huffman_table(ac_htable);
+    /*printf("AC table:\n");*/
+    /*print_huffman_table(ac_htable);*/
     
     // Find Start of Scan marker
     next_marker(file, &bytes_read, &marker);
