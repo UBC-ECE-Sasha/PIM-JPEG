@@ -168,7 +168,7 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
     add_bit_to_scan_buf(&scan_buf, &valid_buf_bits, &input_data, &input_data_bit_index);
 
     long mcu_counter = 0;
-    while(!feof(file)) {
+    while(!feof(file) && (last_marker_seen != EOI_MARKER)) {
         //TODO: Figure out a different way to stop...
         process_mcu(dc_table, ac_table,&scan_buf, &valid_buf_bits, &input_data, &input_data_bit_index);
         mcu_counter++;

@@ -24,6 +24,9 @@
 // Huffman End Of Block Code
 #define HUFF_CODE_EOB 0x00
 
+unsigned int last_byte_read;
+unsigned int last_marker_seen;
+
 // Reading file input
 unsigned int read_1_byte(FILE *file, int *bytes_read)
 {
@@ -32,8 +35,18 @@ unsigned int read_1_byte(FILE *file, int *bytes_read)
     c = getc(file);
     if (c == EOF)
        ERREXIT("Premature EOF in JPEG file"); 
+    else if (c == 0x00 && last_byte_read == 0xFF) {
+        // We must have a stuff byte, read another byte
+        c = getc(file);
+        if (c == EOF)
+            ERREXIT("Premature EOF in JPEG file");
+        *bytes_read++;
+    } else if (last_byte_read == 0xFF && c != 0x00) {
+        last_marker_seen = (0xFF << 8) + c;
+    }
     
     *bytes_read++;
+    last_byte_read = c;
     return c;
 }
 
@@ -41,15 +54,8 @@ unsigned int read_2_bytes(FILE *file, int *bytes_read)
 {
     unsigned int c1, c2, ret; 
 
-    c1 = getc(file);
-    if (c1 == EOF)
-        ERREXIT("Premature EOF in JPEG file");
-    
-    c2 = getc(file);
-    if (c2 == EOF)
-        ERREXIT("Premature EOF in JPEG file");
-
-    *bytes_read += 2;
+    c1 = read_1_byte(file, bytes_read);
+    c2 = read_1_byte(file, bytes_read);
 
     ret = c1 << 8;
     ret = ret + c2;
@@ -59,7 +65,7 @@ unsigned int read_2_bytes(FILE *file, int *bytes_read)
 void print_file_offset(FILE *file)
 {
     long offset = ftell(file);
-    printf("File position: 0x%05x\n", offset);
+    printf("File position: 0x%08x\n", offset);
 }
 
 /*
