@@ -1,3 +1,5 @@
-testimages/
+testimages/*
+!testimages/IMG_3009_grayscale.JPG
+!testimages/jpegxr-home_grayscale.jpg
 libjpeg-turbo/build/
 remove_lines
