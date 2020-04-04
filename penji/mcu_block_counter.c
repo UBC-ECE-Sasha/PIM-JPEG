@@ -19,6 +19,11 @@ FILE *file;
 int bytes_read = 0;
 unsigned int marker;
 
+int original_num_lines = 0;
+int original_samples_per_line = 0;
+long expected_mcu_count = 0;
+int num_image_components = 0;
+
 void print_usage(void)
 {
     fprintf(stderr, "usage: mcu_block_counter <inputfile>\n");
@@ -26,6 +31,7 @@ void print_usage(void)
 
 huffman_symbol* find_hufftable_entry(huffman_table *table, unsigned short *scan_buf, unsigned char *valid_buf_bits)
 {
+    assert (*valid_buf_bits <= 16);
     if (*valid_buf_bits == 0) {
         return NULL;
     }
@@ -51,6 +57,8 @@ huffman_symbol* find_hufftable_entry(huffman_table *table, unsigned short *scan_
 
 void add_bit_to_scan_buf(unsigned short *scan_buf, unsigned char *valid_buf_bits, unsigned char *input_data, unsigned char *input_data_bit_index)
 {
+    assert (*valid_buf_bits < 16);
+    assert (*input_data_bit_index < 8);
     *scan_buf = (*scan_buf << 1) + ((*input_data >> (7 - *input_data_bit_index)) & 0x01); 
     *input_data_bit_index += 1;
     *valid_buf_bits += 1;
@@ -60,8 +68,9 @@ void add_bit_to_scan_buf(unsigned short *scan_buf, unsigned char *valid_buf_bits
     }    
 }
 
-void input_data_skip_bits(unsigned char *input_data, unsigned char *input_data_bit_index, unsigned short nbits)
+void input_data_skip_bits(unsigned char *input_data, unsigned char *input_data_bit_index, short nbits)
 {
+    assert (*input_data_bit_index < 8);
     if (nbits > (8 - *input_data_bit_index)) {
         *input_data = 0;
         nbits -= 8 - *input_data_bit_index;
@@ -93,6 +102,7 @@ void input_data_skip_bits(unsigned char *input_data, unsigned char *input_data_b
         *input_data_bit_index = nbits;
         nbits = 0;
     }
+    assert (nbits == 0);
 }
 
 void process_mcu(huffman_table *dc_table, huffman_table *ac_table,
@@ -208,11 +218,11 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
     add_bit_to_scan_buf(&scan_buf, &valid_buf_bits, &input_data, &input_data_bit_index);
 
     long mcu_counter = 0;
-    while(!feof(file) && (last_marker_seen != EOI_MARKER)) {
+    while(!feof(file) && (last_marker_seen != EOI_MARKER) && mcu_counter < expected_mcu_count) {
         //TODO: Figure out a different way to stop...
         process_mcu(dc_table, ac_table,&scan_buf, &valid_buf_bits, &input_data, &input_data_bit_index);
         mcu_counter++;
-        if (mcu_counter % 80 == 0) {
+        if (mcu_counter % 880 == 0) {
             fprintf(stdout, "Progress: Found %d MCUs so far\n", mcu_counter);
         }
     }
@@ -227,9 +237,9 @@ void process_frame()
     // Print the number of image components in frame
     read_2_bytes(file, &bytes_read);     // length
     read_1_byte(file, &bytes_read);      // Sample Precision
-    read_2_bytes(file, &bytes_read);     // Lines
-    read_2_bytes(file, &bytes_read);     // Samples per line
-    unsigned int num_image_components = read_1_byte(file, &bytes_read);
+    original_num_lines = read_2_bytes(file, &bytes_read);     // Lines
+    original_samples_per_line = read_2_bytes(file, &bytes_read);     // Samples per line
+    num_image_components = read_1_byte(file, &bytes_read);
 
     fprintf(stdout, "Number of image components in frame: %d\n", num_image_components);
 
@@ -237,6 +247,10 @@ void process_frame()
         fprintf(stderr, "Can't deal with frames with more than one component at the moment\n");
         return;
     }
+
+    expected_mcu_count = original_num_lines * original_samples_per_line / 64;
+    fprintf(stdout, "Original Num Lines: %d\nOriginal Samples Per Line: %d\nExpected MCU count: %d\n", original_num_lines, original_samples_per_line,
+            expected_mcu_count);
 
     // Find Define Huffman Table marker for DC table
     while (marker != DHT_MARKER) {
