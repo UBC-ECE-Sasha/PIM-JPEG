@@ -333,5 +333,10 @@ int main(int argc, char **argv)
     }
 
     process_frame();
+
+    // Write everything that's left to the output file
+    while(last_marker_seen != EOI_MARKER) {
+        next_marker(infile, &bytes_read, &marker);
+    }
     write_buffer_to_file();
 }
