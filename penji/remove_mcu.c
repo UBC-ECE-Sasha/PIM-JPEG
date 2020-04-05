@@ -205,18 +205,94 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
      * code (starting from the shortest length) to the current data buffer
      * and see what sticks.
      */
+    
+    write_buffer_to_file();
+    int column_index = 0;
     unsigned short scan_buf = 0;
     unsigned char valid_buf_bits = 0;
     unsigned char input_data = read_1_byte(infile, &bytes_read);
     unsigned char input_data_bit_index = 0;
 
+    unsigned char prev_mcu_terminating_byte;
+    int buffer_index_of_prev_mcu_end;
+    int bit_index_of_previous_mcu_end;
+    int bit_index_of_next_mcu_start;
+
     add_bit_to_scan_buf(&scan_buf, &valid_buf_bits, &input_data, &input_data_bit_index);
 
+    /*
+     * NOTE: We are implicitly relying on the buffer not getting full when
+     * processing 3 MCUs
+     */
     long mcu_counter = 0;
     while(!feof(infile) && (last_marker_seen != EOI_MARKER) && mcu_counter < expected_mcu_count) {
         //TODO: Figure out a different way to stop...
+        if (column_index % 2 == 0) {
+            set_place_bytes_into_buffer(TRUE);
+        } else {
+            set_place_bytes_into_buffer(FALSE);
+        }
+
         process_mcu(dc_table, ac_table,&scan_buf, &valid_buf_bits, &input_data, &input_data_bit_index);
+        
+        if (column_index % 2 == 0) {
+            // Do the processing that merges originally non-adjacent MCUs
+            if (mcu_counter == 0) {
+                bit_index_of_previous_mcu_end = input_data_bit_index;
+            } else {
+                assert (out_buf_index >= 2);
+                // TODO: Potential off by one error here
+                int bits_to_shift_by = bit_index_of_previous_mcu_end + 1;
+                if (bits_to_shift_by == 8) {
+                    // Nothing to do
+                } else {
+                    for (int i = 0; i < out_buf_index - 1; i++) {
+                        unsigned char cur = out_buf[i];
+                        // Preserve only the first 8 - bits_to_shift_by bits
+                        unsigned char next = out_buf[i+1] >> bits_to_shift_by;
+
+                        // Preserve only the first bits_to_shift_by bits
+                        cur = cur >> (8 - bits_to_shift_by);
+                        cur = cur << (8 - bits_to_shift_by);
+
+                        cur = cur + next;
+                        out_buf[i] = cur;
+                    }
+                    
+                    // Now take care of the last byte
+                    unsigned char last_byte = out_buf[out_buf_index - 1];
+                    last_byte = last_byte << (8 - bits_to_shift_by);
+
+                    if (input_data_bit_index >= (8 - bits_to_shift_by)) {
+                        bit_index_of_previous_mcu_end = input_data_bit_index - (8 - bits_to_shift_by);
+                        assert (bit_index_of_previous_mcu_end < 8);
+                    } else {
+                        last_byte = out_buf[out_buf_index - 2];
+                        bit_index_of_previous_mcu_end = bits_to_shift_by + input_data_bit_index - 1;
+                        out_buf_index--;
+                        assert (bit_index_of_previous_mcu_end < 8);
+                    }
+                }
+
+            }
+
+            unsigned char mcu_terminating_byte = out_buf[out_buf_index - 1];
+            out_buf_index--;
+            write_buffer_to_file();
+            assert (out_buf_index == 0);
+            out_buf[out_buf_index++] = mcu_terminating_byte;
+
+        } else {
+            // TODO: Need to use this
+            bit_index_of_next_mcu_start = input_data_bit_index;
+        }
+
         mcu_counter++;
+        column_index++;
+        if (column_index > original_samples_per_line) {
+            column_index = 0;
+        }
+        
         if (mcu_counter % 880 == 0) {
             fprintf(stdout, "Progress: Found %d MCUs so far\n", mcu_counter);
         }
@@ -335,6 +411,7 @@ int main(int argc, char **argv)
     process_frame();
 
     // Write everything that's left to the output file
+    // TODO: Also need to flush the remainder of the input buffer
     while(last_marker_seen != EOI_MARKER) {
         next_marker(infile, &bytes_read, &marker);
     }
