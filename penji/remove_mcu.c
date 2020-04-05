@@ -1,10 +1,18 @@
 /*
- * mcu_block_counter.c
+ * remove_mcu.c
  *
- * A standalone program that finds and counts the MCU blocks in a jpeg file.
+ * A standalone program that removes every other MCU in a row, effectively
+ * modifying the 'samples_per_line' header field, but without explicitly
+ * updating the header field.
  *
  * Usage:
- *  mcu_block_counter <inputfile>
+ *  remove_mcu <inputfile> <outputfile>
+ *
+ */
+
+/*
+ * NOTE: A lot of functions have been copied from mcu_block_counter.c
+ * I'm sure we can do better to prevent this duplication
  *
  */
 
@@ -14,8 +22,12 @@
 #include "util.h"
 #include <assert.h>
 
+#define BUFFER_SIZE 1 << 14
 
-FILE *file;
+FILE *infile;
+FILE *outfile;
+unsigned char out_buf[BUFFER_SIZE];
+int out_buf_index = 0;
 int bytes_read = 0;
 unsigned int marker;
 
@@ -26,9 +38,11 @@ int num_image_components = 0;
 
 void print_usage(void)
 {
-    fprintf(stderr, "usage: mcu_block_counter <inputfile>\n");
+    fprintf(stderr, "usage: remove_mcu <inputfile> <outputfile>\n");
 }
 
+
+/* NOTE: Copied pretty much all of this from mcu_block_counter.c */
 void add_bit_to_scan_buf(unsigned short *scan_buf, unsigned char *valid_buf_bits, unsigned char *input_data, unsigned char *input_data_bit_index)
 {
     assert (*valid_buf_bits < 16);
@@ -37,11 +51,12 @@ void add_bit_to_scan_buf(unsigned short *scan_buf, unsigned char *valid_buf_bits
     *input_data_bit_index += 1;
     *valid_buf_bits += 1;
     if (*input_data_bit_index > 7) {
-        *input_data = read_1_byte(file, &bytes_read);
+        *input_data = read_1_byte(infile, &bytes_read);
         *input_data_bit_index = 0;
     }    
 }
 
+/* NOTE: Copied pretty much all of this from mcu_block_counter.c */
 void input_data_skip_bits(unsigned char *input_data, unsigned char *input_data_bit_index, short nbits)
 {
     assert (*input_data_bit_index < 8);
@@ -52,7 +67,7 @@ void input_data_skip_bits(unsigned char *input_data, unsigned char *input_data_b
     } else if (nbits == (8 - *input_data_bit_index)) {
         *input_data = 0;
         nbits = 0;
-        *input_data = read_1_byte(file, &bytes_read);
+        *input_data = read_1_byte(infile, &bytes_read);
         *input_data_bit_index = 0;
     } else {
         *input_data_bit_index += nbits;
@@ -61,24 +76,25 @@ void input_data_skip_bits(unsigned char *input_data, unsigned char *input_data_b
 
     while (nbits > 0) {
         if (nbits >= 16) {
-            read_2_bytes(file, &bytes_read);
+            read_2_bytes(infile, &bytes_read);
             nbits -= 16;
             continue;
         }
 
         if (nbits >= 8) {
-            read_1_byte(file, &bytes_read);
+            read_1_byte(infile, &bytes_read);
             nbits -= 8;
             continue;
         }
 
-        *input_data = read_1_byte(file, &bytes_read);
+        *input_data = read_1_byte(infile, &bytes_read);
         *input_data_bit_index = nbits;
         nbits = 0;
     }
     assert (nbits == 0);
 }
 
+/* NOTE: Copied pretty much all of this from mcu_block_counter.c */
 void process_mcu(huffman_table *dc_table, huffman_table *ac_table,
         unsigned short *scan_buf, unsigned char *valid_buf_bits, unsigned char *input_data, unsigned char *input_data_bit_index)
 {
@@ -166,16 +182,16 @@ void process_mcu(huffman_table *dc_table, huffman_table *ac_table,
 void process_scan(huffman_table *dc_table, huffman_table *ac_table)
 {
     printf("Processing Scan ");
-    print_file_offset(file);
-    int header_len = read_2_bytes(file, &bytes_read) - 2;
+    print_file_offset(infile);
+    int header_len = read_2_bytes(infile, &bytes_read) - 2;
     unsigned char scan_header[header_len];
 
     while (header_len != 0) {
         if (header_len > 1) {
-            read_2_bytes(file, &bytes_read);
+            read_2_bytes(infile, &bytes_read);
             header_len -= 2;
         } else {
-            read_1_byte(file, &bytes_read);
+            read_1_byte(infile, &bytes_read);
             header_len--;
         }
     }
@@ -191,13 +207,13 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
      */
     unsigned short scan_buf = 0;
     unsigned char valid_buf_bits = 0;
-    unsigned char input_data = read_1_byte(file, &bytes_read);
+    unsigned char input_data = read_1_byte(infile, &bytes_read);
     unsigned char input_data_bit_index = 0;
 
     add_bit_to_scan_buf(&scan_buf, &valid_buf_bits, &input_data, &input_data_bit_index);
 
     long mcu_counter = 0;
-    while(!feof(file) && (last_marker_seen != EOI_MARKER) && mcu_counter < expected_mcu_count) {
+    while(!feof(infile) && (last_marker_seen != EOI_MARKER) && mcu_counter < expected_mcu_count) {
         //TODO: Figure out a different way to stop...
         process_mcu(dc_table, ac_table,&scan_buf, &valid_buf_bits, &input_data, &input_data_bit_index);
         mcu_counter++;
@@ -209,16 +225,18 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
     fprintf(stdout, "Finished processing MCUs. Found %d MCU blocks\n", mcu_counter);
 }
 
+
+/* NOTE: Copied pretty much all of this from mcu_block_counter.c */
 void process_frame()
 {
     printf("Found frame? ");
-    print_file_offset(file);
+    print_file_offset(infile);
     // Print the number of image components in frame
-    read_2_bytes(file, &bytes_read);     // length
-    read_1_byte(file, &bytes_read);      // Sample Precision
-    original_num_lines = read_2_bytes(file, &bytes_read);     // Lines
-    original_samples_per_line = read_2_bytes(file, &bytes_read);     // Samples per line
-    num_image_components = read_1_byte(file, &bytes_read);
+    read_2_bytes(infile, &bytes_read);     // length
+    read_1_byte(infile, &bytes_read);      // Sample Precision
+    original_num_lines = read_2_bytes(infile, &bytes_read);     // Lines
+    original_samples_per_line = read_2_bytes(infile, &bytes_read);     // Samples per line
+    num_image_components = read_1_byte(infile, &bytes_read);
 
     fprintf(stdout, "Number of image components in frame: %d\n", num_image_components);
 
@@ -233,15 +251,15 @@ void process_frame()
 
     // Find Define Huffman Table marker for DC table
     while (marker != DHT_MARKER) {
-        next_marker(file, &bytes_read, &marker);
+        next_marker(infile, &bytes_read, &marker);
     }
     
     printf("DC Table? ");
-    print_file_offset(file);
-    huffman_table *dc_htable = parse_huffman_table(file, &bytes_read);
+    print_file_offset(infile);
+    huffman_table *dc_htable = parse_huffman_table(infile, &bytes_read);
     if (dc_htable == NULL) {
         fprintf(stderr, "Could not parse Huffman Table");
-        fclose(file);
+        fclose(infile);
         exit(EXIT_FAILURE);
     }
 
@@ -250,17 +268,17 @@ void process_frame()
     /*print_huffman_bitstrings(dc_htable);*/
 
     // Find Define Huffman Table marker for AC table
-    next_marker(file, &bytes_read, &marker);
+    next_marker(infile, &bytes_read, &marker);
     while (marker != DHT_MARKER) {
-        next_marker(file, &bytes_read, &marker);
+        next_marker(infile, &bytes_read, &marker);
     }
     
     printf("AC Table? ");
-    print_file_offset(file);
-    huffman_table *ac_htable = parse_huffman_table(file, &bytes_read);
+    print_file_offset(infile);
+    huffman_table *ac_htable = parse_huffman_table(infile, &bytes_read);
     if (ac_htable == NULL) {
         fprintf(stderr, "Could not parse Huffman Table");
-        fclose(file);
+        fclose(infile);
         exit(EXIT_FAILURE);
     }
 
@@ -269,9 +287,9 @@ void process_frame()
     /*print_huffman_bitstrings(ac_htable);*/
     
     // Find Start of Scan marker
-    next_marker(file, &bytes_read, &marker);
+    next_marker(infile, &bytes_read, &marker);
     while (marker != SOS_MARKER) {
-        next_marker(file, &bytes_read, &marker);
+        next_marker(infile, &bytes_read, &marker);
     }
 
     process_scan(dc_htable, ac_htable);
@@ -279,12 +297,17 @@ void process_frame()
 
 int main(int argc, char **argv)
 {
-
     /* Check argc */
-    if (argc == 2) {
-        file = fopen(argv[1], "rb");
-        if (file == NULL) {
+    if (argc == 3) {
+        infile = fopen(argv[1], "rb");
+        if (infile == NULL) {
             fprintf(stderr, "Cannot open input file\n");
+            exit(EXIT_FAILURE);
+        }
+        outfile = fopen(argv[2], "wb");
+        if (outfile == NULL) {
+            fprintf(stderr, "Cannot open output file\n");
+            exit(EXIT_FAILURE);
         }
     } else {
         fprintf(stderr, "Invalid number of args\n");
@@ -292,19 +315,23 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+    setup_output_buffer(out_buf, &out_buf_index, BUFFER_SIZE, outfile);
+    set_place_bytes_into_buffer(TRUE);
+
     // Find Start of Frame marker
-    next_marker(file, &bytes_read, &marker);
+    next_marker(infile, &bytes_read, &marker);
     while (marker != SOF_MARKER) {
-        next_marker(file, &bytes_read, &marker);
+        next_marker(infile, &bytes_read, &marker);
     }
     
     process_frame();
     
     // repeat frame processing in case there's another frame
-    next_marker(file, &bytes_read, &marker);
+    next_marker(infile, &bytes_read, &marker);
     while (marker != SOF_MARKER) {
-        next_marker(file, &bytes_read, &marker);
+        next_marker(infile, &bytes_read, &marker);
     }
 
     process_frame();
+    write_buffer_to_file();
 }

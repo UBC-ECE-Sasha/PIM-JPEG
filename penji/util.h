@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <assert.h>
 
 #define TRUE 1
 #define FALSE 0
@@ -27,17 +28,62 @@
 unsigned int last_byte_read;
 unsigned int last_marker_seen;
 
+unsigned char bytes_to_buffer = FALSE;
+unsigned char *output_buffer;
+int *output_buffer_index;
+int output_buffer_size;
+FILE *output_file;
+
+void setup_output_buffer(unsigned char *out_buf, int *buf_index,
+        int buf_size, FILE *out_file)
+{
+    output_buffer = out_buf;
+    output_buffer_index = buf_index;
+    output_buffer_size = buf_size;
+    output_file = out_file;
+}
+
+void set_place_bytes_into_buffer(int value)
+{
+    bytes_to_buffer = value;
+}
+
+int write_buffer_to_file()
+{
+   size_t bytes_written = fwrite(output_buffer, sizeof(unsigned char),
+           *output_buffer_index, output_file);
+   if (bytes_written != *output_buffer_index) {
+        ERREXIT("Error while writing to output file\n"); 
+   }
+
+   *output_buffer_index = 0;
+   return bytes_written;
+}
+
+void place_byte_into_buffer(unsigned char byte) {
+    if (bytes_to_buffer) {
+        if (*output_buffer_index >= output_buffer_size) {
+            write_buffer_to_file();
+        }
+
+        output_buffer[*output_buffer_index] = byte;
+        *output_buffer_index += 1;
+    }
+}
+
 // Reading file input
 unsigned int read_1_byte(FILE *file, int *bytes_read)
 {
     unsigned int c;
 
     c = getc(file);
+    place_byte_into_buffer(c);
     if (c == EOF)
        ERREXIT("Premature EOF in JPEG file"); 
     else if (c == 0x00 && last_byte_read == 0xFF) {
         // We must have a stuff byte, read another byte
         c = getc(file);
+        place_byte_into_buffer(c);
         if (c == EOF)
             ERREXIT("Premature EOF in JPEG file");
         *bytes_read++;
@@ -260,6 +306,34 @@ huffman_table* parse_huffman_table(FILE *file, int *bytes_read)
     destroy_dht_tree(tree_root);
     return table;
 }
+
+
+huffman_symbol* find_hufftable_entry(huffman_table *table, unsigned short *scan_buf, unsigned char *valid_buf_bits)
+{
+    assert (*valid_buf_bits <= 16);
+    if (*valid_buf_bits == 0) {
+        return NULL;
+    }
+
+    unsigned char len_index = *valid_buf_bits - 1;
+    assert (len_index >= 0 && len_index < 16);
+
+    unsigned char available_codes = table->frequencies[len_index];
+    if (available_codes == 0) {
+        return NULL;
+    }
+
+    huffman_symbol *result = &table->symbols[len_index];
+    for (unsigned char i = 0; i < available_codes; i++) {
+        if (result->bitstring == *scan_buf) {
+            break;
+        } 
+        result = result->next;
+    }
+
+    return result;
+}
+
 
 /**
  * Print out a huffman table
