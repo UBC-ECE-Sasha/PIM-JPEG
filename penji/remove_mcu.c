@@ -239,36 +239,67 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
             // Do the processing that merges originally non-adjacent MCUs
             if (mcu_counter == 0) {
                 bit_index_of_previous_mcu_end = input_data_bit_index;
-            } else {
-                assert (out_buf_index >= 2);
+            } else if (out_buf_index >= 2) {
                 // TODO: Potential off by one error here
                 int bits_to_shift_by = bit_index_of_previous_mcu_end + 1;
+                int bits_to_append = 8 - bit_index_of_previous_mcu_end - 1;
+                int bits_to_chop_off = bit_index_of_next_mcu_start + 1; // shift left this amount
+
                 if (bits_to_shift_by == 8) {
                     // Nothing to do
                 } else {
                     for (int i = 0; i < out_buf_index - 1; i++) {
-                        unsigned char cur = out_buf[i];
-                        // Preserve only the first 8 - bits_to_shift_by bits
-                        unsigned char next = out_buf[i+1] >> bits_to_shift_by;
+                        unsigned char cur, next;
+                        cur = out_buf[i];
+                        next = out_buf[i+1];
+                        if (i == 0) {
+                            cur = cur >> bits_to_append;
+                            cur = cur << bits_to_append;
 
-                        // Preserve only the first bits_to_shift_by bits
-                        cur = cur >> (8 - bits_to_shift_by);
-                        cur = cur << (8 - bits_to_shift_by);
+                            next = next << bits_to_chop_off;
+                            next = next >> bits_to_chop_off;
+                            next = next >> (8 - bits_to_chop_off - bits_to_append);
 
+                            cur = cur + next;
+                            out_buf[i] = cur;
+                            continue;
+                        }
+
+                        cur = cur << (bits_to_chop_off + bits_to_append);
+                        next = next >> (8 - (bits_to_chop_off + bits_to_append));
                         cur = cur + next;
                         out_buf[i] = cur;
+                        
+
+                        /*// OLD STUFF*/
+                        /*cur = out_buf[i];*/
+                        
+                        /*// Preserve only the first 8 - bits_to_shift_by bits*/
+                        /*// TODO: Take into the starting bit index for the next*/
+                        /*//  MCU*/
+                        /*next = out_buf[i+1] >> bits_to_shift_by;*/
+
+                        /*// Preserve only the first bits_to_shift_by bits*/
+                        /*cur = cur >> (8 - bits_to_shift_by);*/
+                        /*cur = cur << (8 - bits_to_shift_by);*/
+
+                        /*cur = cur + next;*/
+                        /*out_buf[i] = cur;*/
                     }
                     
                     // Now take care of the last byte
                     unsigned char last_byte = out_buf[out_buf_index - 1];
-                    last_byte = last_byte << (8 - bits_to_shift_by);
+                    last_byte = last_byte << (bits_to_chop_off + bits_to_append);
+                    out_buf[out_buf_index - 1] = last_byte;
 
-                    if (input_data_bit_index >= (8 - bits_to_shift_by)) {
-                        bit_index_of_previous_mcu_end = input_data_bit_index - (8 - bits_to_shift_by);
+                    if (input_data_bit_index >= (bits_to_chop_off + bits_to_append)) {
+                        bit_index_of_previous_mcu_end = input_data_bit_index - (bits_to_chop_off + bits_to_append);
                         assert (bit_index_of_previous_mcu_end < 8);
                     } else {
                         last_byte = out_buf[out_buf_index - 2];
-                        bit_index_of_previous_mcu_end = bits_to_shift_by + input_data_bit_index - 1;
+                        bit_index_of_previous_mcu_end = bits_to_append + input_data_bit_index - 1;
+                        // TODO: Unsure about this next line...
+                        bit_index_of_previous_mcu_end = bit_index_of_previous_mcu_end % 8;
                         out_buf_index--;
                         assert (bit_index_of_previous_mcu_end < 8);
                     }
@@ -283,8 +314,23 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
             out_buf[out_buf_index++] = mcu_terminating_byte;
 
         } else {
-            // TODO: Need to use this
             bit_index_of_next_mcu_start = input_data_bit_index;
+        }
+
+        if (column_index % 2 == 0 && (mcu_counter == expected_mcu_count - 1 || mcu_counter == expected_mcu_count - 2)) {
+            // we must add the padding bits 
+            int bits_to_append = 8 - bit_index_of_previous_mcu_end + 1;
+            unsigned char last_byte = out_buf[out_buf_index - 1];
+            unsigned char padding = 0xFF;
+
+            last_byte = last_byte >> bits_to_append;
+            last_byte = last_byte << bits_to_append;
+            
+            padding = padding >> (8 - bits_to_append);
+            last_byte = last_byte + padding;
+
+            out_buf[out_buf_index - 1] = last_byte;
+            
         }
 
         mcu_counter++;
@@ -302,7 +348,6 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
 }
 
 
-/* NOTE: Copied pretty much all of this from mcu_block_counter.c */
 void process_frame()
 {
     printf("Found frame? ");
@@ -311,19 +356,35 @@ void process_frame()
     read_2_bytes(infile, &bytes_read);     // length
     read_1_byte(infile, &bytes_read);      // Sample Precision
     original_num_lines = read_2_bytes(infile, &bytes_read);     // Lines
+
+    // There is a need to modify the samples per line otherwise the image will be garbage
+    write_buffer_to_file();
+    set_place_bytes_into_buffer(FALSE);
     original_samples_per_line = read_2_bytes(infile, &bytes_read);     // Samples per line
+    int modified_samples_per_line = original_samples_per_line / 2 +
+        (original_samples_per_line % 2 == 0 ? 0 : 1);
+    
     num_image_components = read_1_byte(infile, &bytes_read);
 
     fprintf(stdout, "Number of image components in frame: %d\n", num_image_components);
 
     if (num_image_components != 1) {
         fprintf(stderr, "Can't deal with frames with more than one component at the moment\n");
+        set_place_bytes_into_buffer(TRUE);
+        place_byte_into_buffer(original_samples_per_line >> 16);
+        place_byte_into_buffer(original_samples_per_line & 0x0000FFFF);
+        place_byte_into_buffer(num_image_components);
         return;
     }
 
+    set_place_bytes_into_buffer(TRUE);
+    place_byte_into_buffer(modified_samples_per_line >> 16);
+    place_byte_into_buffer(modified_samples_per_line & 0x0000FFFF);
+    place_byte_into_buffer(num_image_components);
+
     expected_mcu_count = original_num_lines * original_samples_per_line / 64;
-    fprintf(stdout, "Original Num Lines: %d\nOriginal Samples Per Line: %d\nExpected MCU count: %d\n", original_num_lines, original_samples_per_line,
-            expected_mcu_count);
+    fprintf(stdout, "Original Num Lines: %d\nOriginal Samples Per Line: %d\nExpected MCU count: %d\nModified Samples Per Line: %d\n", original_num_lines, original_samples_per_line,
+            expected_mcu_count, modified_samples_per_line);
 
     // Find Define Huffman Table marker for DC table
     while (marker != DHT_MARKER) {
