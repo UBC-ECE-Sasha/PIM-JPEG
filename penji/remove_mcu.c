@@ -238,7 +238,7 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
         if (column_index % 2 == 0) {
             // Do the processing that merges originally non-adjacent MCUs
             if (mcu_counter == 0) {
-                bit_index_of_previous_mcu_end = input_data_bit_index;
+                bit_index_of_previous_mcu_end = input_data_bit_index == 0 ? 7 : (input_data_bit_index - 1);
             } else if (out_buf_index >= 2) {
                 // TODO: Potential off by one error here
                 int bits_to_shift_by = bit_index_of_previous_mcu_end + 1;
@@ -269,22 +269,6 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
                         next = next >> (8 - (bits_to_chop_off + bits_to_append));
                         cur = cur + next;
                         out_buf[i] = cur;
-                        
-
-                        /*// OLD STUFF*/
-                        /*cur = out_buf[i];*/
-                        
-                        /*// Preserve only the first 8 - bits_to_shift_by bits*/
-                        /*// TODO: Take into the starting bit index for the next*/
-                        /*//  MCU*/
-                        /*next = out_buf[i+1] >> bits_to_shift_by;*/
-
-                        /*// Preserve only the first bits_to_shift_by bits*/
-                        /*cur = cur >> (8 - bits_to_shift_by);*/
-                        /*cur = cur << (8 - bits_to_shift_by);*/
-
-                        /*cur = cur + next;*/
-                        /*out_buf[i] = cur;*/
                     }
                     
                     // Now take care of the last byte
@@ -316,6 +300,11 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
 
         } else {
             bit_index_of_next_mcu_start = input_data_bit_index;
+            prev_mcu_terminating_byte = input_data;
+
+            if (input_data_bit_index != 0) {
+                out_buf[out_buf_index++] = prev_mcu_terminating_byte;
+            }
         }
 
         if (column_index % 2 == 0 && (mcu_counter == expected_mcu_count - 1 || mcu_counter == expected_mcu_count - 2)) {
