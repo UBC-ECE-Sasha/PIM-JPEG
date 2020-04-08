@@ -243,7 +243,7 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
                 // TODO: Potential off by one error here
                 int bits_to_shift_by = bit_index_of_previous_mcu_end + 1;
                 int bits_to_append = 8 - bit_index_of_previous_mcu_end - 1;
-                int bits_to_chop_off = bit_index_of_next_mcu_start + 1; // shift left this amount
+                int bits_to_chop_off = bit_index_of_next_mcu_start; // shift left this amount
 
                 if (bits_to_shift_by == 8) {
                     // Nothing to do
@@ -289,6 +289,10 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
                     }
                 }
 
+            } else {
+                // The next MCU is encompassed within one byte so we didn't add anything new to the buffer
+                bit_index_of_previous_mcu_end = input_data_bit_index - 1;
+                assert(bit_index_of_previous_mcu_end >= 0 && bit_index_of_previous_mcu_end < 8);
             }
 
             unsigned char mcu_terminating_byte = out_buf[out_buf_index - 1];
