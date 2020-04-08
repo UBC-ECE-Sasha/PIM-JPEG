@@ -310,6 +310,7 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
             unsigned char mcu_terminating_byte = out_buf[out_buf_index - 1];
             out_buf_index--;
             write_buffer_to_file();
+            
             assert (out_buf_index == 0);
             out_buf[out_buf_index++] = mcu_terminating_byte;
 
@@ -371,15 +372,15 @@ void process_frame()
     if (num_image_components != 1) {
         fprintf(stderr, "Can't deal with frames with more than one component at the moment\n");
         set_place_bytes_into_buffer(TRUE);
-        place_byte_into_buffer(original_samples_per_line >> 16);
-        place_byte_into_buffer(original_samples_per_line & 0x0000FFFF);
+        place_byte_into_buffer(original_samples_per_line >> 8);
+        place_byte_into_buffer(original_samples_per_line & 0x00FF);
         place_byte_into_buffer(num_image_components);
         return;
     }
 
     set_place_bytes_into_buffer(TRUE);
-    place_byte_into_buffer(modified_samples_per_line >> 16);
-    place_byte_into_buffer(modified_samples_per_line & 0x0000FFFF);
+    place_byte_into_buffer(modified_samples_per_line >> 8);
+    place_byte_into_buffer(modified_samples_per_line & 0x00FF);
     place_byte_into_buffer(num_image_components);
 
     expected_mcu_count = original_num_lines * original_samples_per_line / 64;
