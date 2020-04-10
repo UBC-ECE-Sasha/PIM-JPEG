@@ -146,8 +146,6 @@ void process_mcu(huffman_table *dc_table, huffman_table *ac_table,
 
             if (huffsymbol->value == 0xF0) {
                 // Found ZRL
-                // TODO: Potential off-by-one-error
-                // TODO: Might even still need to skip data bits
                 i += 16;
                 assert (i < 64);
                 break;
@@ -234,13 +232,12 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
         }
 
         process_mcu(dc_table, ac_table,&scan_buf, &valid_buf_bits, &input_data, &input_data_bit_index);
-        
+
         if (column_index % 2 == 0) {
             // Do the processing that merges originally non-adjacent MCUs
             if (mcu_counter == 0) {
                 bit_index_of_previous_mcu_end = input_data_bit_index == 0 ? 7 : (input_data_bit_index - 1);
             } else if (out_buf_index >= 2) {
-                // TODO: Potential off by one error here
                 int bits_to_shift_by = bit_index_of_previous_mcu_end + 1;
                 int bits_to_append = 8 - bit_index_of_previous_mcu_end - 1;
                 int bits_to_chop_off = bit_index_of_next_mcu_start; // shift left this amount
@@ -289,12 +286,34 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
                     }
                 }
 
+                // Take care of any 0xFF bytes we may have generated
+                unsigned char tmp_buf[out_buf_index * 2];
+                int tmp_index = 0;
+                for (int i = 0; i < out_buf_index; i++) {
+                    if (out_buf[i] == 0xFF) {
+                        tmp_buf[tmp_index++] = out_buf[i];
+                        tmp_buf[tmp_index++] = 0x00;
+                    } else {
+                        tmp_buf[tmp_index++] = out_buf[i];
+                    }
+                }
+
+                if (tmp_index > out_buf_index) {
+                    // We've got some extra 0x00 bytes
+                    for (int i = 0; i < tmp_index; i++) {
+                        out_buf[i] = tmp_buf[i];
+                    }
+
+                    out_buf_index = tmp_index;
+                }
+
             } else {
                 // The next MCU is encompassed within one byte so we didn't add anything new to the buffer
                 bit_index_of_previous_mcu_end = input_data_bit_index - 1;
                 assert(bit_index_of_previous_mcu_end >= 0 && bit_index_of_previous_mcu_end < 8);
             }
 
+            // FIXME: Potential issue here: if we add 0x00 bytes, how do we handle that here??
             unsigned char mcu_terminating_byte = out_buf[out_buf_index - 1];
             out_buf_index--;
             write_buffer_to_file();
