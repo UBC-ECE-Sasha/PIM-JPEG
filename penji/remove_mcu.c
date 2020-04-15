@@ -235,62 +235,59 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
 
         if (column_index % 2 == 0) {
             // Do the processing that merges originally non-adjacent MCUs
+            
             if (mcu_counter == 0) {
                 bit_index_of_previous_mcu_end = input_data_bit_index == 0 ? 7 : (input_data_bit_index - 1);
             } else if (out_buf_index >= 2) {
-                int bits_to_shift_by = bit_index_of_previous_mcu_end + 1;
-                int bits_to_append = 8 - bit_index_of_previous_mcu_end - 1;
-                int bits_to_chop_off = bit_index_of_next_mcu_start; // shift left this amount
+                unsigned char xfer_buf[out_buf_index];
+                int xfer_buf_index = 0; 
 
-                if (bits_to_shift_by == 8) {
-                    // Nothing to do
+                int original_bits_to_append = 8 - bit_index_of_previous_mcu_end - 1;
+                unsigned char cur_byte = out_buf[0];
+                cur_byte = cur_byte >> original_bits_to_append;
+                cur_byte = cur_byte << original_bits_to_append;
+                int cur_byte_bit_index = bit_index_of_previous_mcu_end + 1;
+
+                int next_input_byte_index = 1;
+                unsigned char next_input_byte = out_buf[next_input_byte_index++];
+                int input_byte_bit_index = bit_index_of_next_mcu_start;
+
+                // Add the new MCUs data bit by bit
+                while (!(next_input_byte_index == (out_buf_index - 1) && input_byte_bit_index == input_data_bit_index)) {
+                   if (cur_byte_bit_index > 7) {
+                       xfer_buf[xfer_buf_index++] = cur_byte;
+                       cur_byte = 0x00;
+                       cur_byte_bit_index = 0;
+                   }
+
+                   unsigned char next_bit = (next_input_byte >> (7 - input_byte_bit_index++)) && 0x01;
+                   next_bit = next_bit << (7 - cur_byte_bit_index++);
+                   cur_byte += next_bit;
+
+                   if (input_byte_bit_index > 7) {
+                       next_input_byte = out_buf[next_input_byte_index++];
+                       input_byte_bit_index = 0;
+                   }
+                }
+
+                // Flush any remaining new data
+                if (cur_byte_bit_index != 0) {
+                    xfer_buf[xfer_buf_index++] = cur_byte;
+                    bit_index_of_previous_mcu_end = cur_byte_bit_index - 1;
                 } else {
-                    for (int i = 0; i < out_buf_index - 1; i++) {
-                        unsigned char cur, next;
-                        cur = out_buf[i];
-                        next = out_buf[i+1];
-                        if (i == 0) {
-                            cur = cur >> bits_to_append;
-                            cur = cur << bits_to_append;
+                    bit_index_of_previous_mcu_end = 7;
+                }
 
-                            next = next << bits_to_chop_off;
-                            next = next >> bits_to_chop_off;
-                            next = next >> (8 - bits_to_chop_off - bits_to_append);
-
-                            cur = cur + next;
-                            out_buf[i] = cur;
-                            continue;
-                        }
-
-                        cur = cur << (bits_to_chop_off + bits_to_append);
-                        next = next >> (8 - (bits_to_chop_off + bits_to_append));
-                        cur = cur + next;
-                        out_buf[i] = cur;
-                    }
-                    
-                    // Now take care of the last byte
-                    unsigned char last_byte = out_buf[out_buf_index - 1];
-                    last_byte = last_byte << (bits_to_chop_off + bits_to_append);
-                    out_buf[out_buf_index - 1] = last_byte;
-
-                    if (input_data_bit_index >= (bits_to_chop_off + bits_to_append)) {
-                        bit_index_of_previous_mcu_end = input_data_bit_index - (bits_to_chop_off + bits_to_append);
-                        assert (bit_index_of_previous_mcu_end < 8);
-                    } else {
-                        last_byte = out_buf[out_buf_index - 2];
-                        bit_index_of_previous_mcu_end = bits_to_append + input_data_bit_index - 1;
-                        // TODO: Unsure about this next line...
-                        bit_index_of_previous_mcu_end = bit_index_of_previous_mcu_end % 8;
-                        out_buf_index--;
-                        assert (bit_index_of_previous_mcu_end < 8);
-                    }
+                // Copy over the transfer buffer
+                for (int i = 0; i < xfer_buf_index; i++) {
+                    out_buf[i] = xfer_buf[i];
                 }
 
                 // Take care of any 0xFF bytes we may have generated
                 unsigned char tmp_buf[out_buf_index * 2];
                 int tmp_index = 0;
                 for (int i = 0; i < out_buf_index; i++) {
-                    if (out_buf[i] == 0xFF) {
+                    if (out_buf[i] == 0xFF && i < (out_buf_index - 1)) {
                         tmp_buf[tmp_index++] = out_buf[i];
                         tmp_buf[tmp_index++] = 0x00;
                     } else {
@@ -486,6 +483,7 @@ int main(int argc, char **argv)
 
     // Write everything that's left to the output file
     // TODO: Also need to flush the remainder of the input buffer
+    set_place_bytes_into_buffer(TRUE);
     while(last_marker_seen != EOI_MARKER) {
         next_marker(infile, &bytes_read, &marker);
     }
