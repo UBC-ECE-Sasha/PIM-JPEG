@@ -260,7 +260,7 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
                        cur_byte_bit_index = 0;
                    }
 
-                   unsigned char next_bit = (next_input_byte >> (7 - input_byte_bit_index++)) && 0x01;
+                   unsigned char next_bit = (next_input_byte >> (7 - input_byte_bit_index++)) & 0x01;
                    next_bit = next_bit << (7 - cur_byte_bit_index++);
                    cur_byte += next_bit;
 
