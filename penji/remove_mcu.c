@@ -223,6 +223,7 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
      * processing 3 MCUs
      */
     long mcu_counter = 0;
+    int original_mcus_in_row = original_samples_per_line / 8;
     while(!feof(infile) && (last_marker_seen != EOI_MARKER) && mcu_counter < expected_mcu_count) {
         //TODO: Figure out a different way to stop...
         if (column_index % 2 == 0) {
@@ -235,6 +236,7 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
 
         if (column_index % 2 == 0) {
             // Do the processing that merges originally non-adjacent MCUs
+            unsigned char is_last_column_mcu = column_index == (original_mcus_in_row - 1) ? TRUE : FALSE;
             
             if (mcu_counter == 0) {
                 bit_index_of_previous_mcu_end = input_data_bit_index == 0 ? 7 : (input_data_bit_index - 1);
@@ -253,7 +255,8 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
                 int input_byte_bit_index = bit_index_of_next_mcu_start;
 
                 // Add the new MCUs data bit by bit
-                while (!(next_input_byte_index == (out_buf_index - 1) && input_byte_bit_index == input_data_bit_index)) {
+                /*while (!(next_input_byte_index == (out_buf_index - 1) && input_byte_bit_index == input_data_bit_index)) {*/
+                while (!(next_input_byte_index == (out_buf_index) && input_byte_bit_index == input_data_bit_index)) {
                    if (cur_byte_bit_index > 7) {
                        xfer_buf[xfer_buf_index++] = cur_byte;
                        cur_byte = 0x00;
@@ -278,10 +281,16 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
                     bit_index_of_previous_mcu_end = 7;
                 }
 
+                // Handle case where we've already read the next MCUs first byte into the buffer
+                if ((is_last_column_mcu == TRUE) && (input_byte_bit_index == 0)) {
+                    xfer_buf[xfer_buf_index++] = out_buf[out_buf_index - 1];     
+                }
+
                 // Copy over the transfer buffer
                 for (int i = 0; i < xfer_buf_index; i++) {
                     out_buf[i] = xfer_buf[i];
                 }
+                out_buf_index = xfer_buf_index;
 
                 // Take care of any 0xFF bytes we may have generated
                 unsigned char tmp_buf[out_buf_index * 2];
@@ -310,21 +319,34 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
                 assert(bit_index_of_previous_mcu_end >= 0 && bit_index_of_previous_mcu_end < 8);
             }
 
-            // FIXME: Potential issue here: if we add 0x00 bytes, how do we handle that here??
-            unsigned char mcu_terminating_byte = out_buf[out_buf_index - 1];
-            out_buf_index--;
-            write_buffer_to_file();
-            
-            assert (out_buf_index == 0);
-            out_buf[out_buf_index++] = mcu_terminating_byte;
+            bit_index_of_next_mcu_start = input_data_bit_index;
+
+            if ((is_last_column_mcu == TRUE) && (bit_index_of_next_mcu_start == 0)) {
+                unsigned char first_byte = out_buf[out_buf_index - 2];
+                unsigned char second_byte = out_buf[out_buf_index - 1];
+                out_buf_index -= 2;
+                write_buffer_to_file();
+                
+                assert (out_buf_index == 0);
+                out_buf[out_buf_index++] = first_byte;
+                out_buf[out_buf_index++] = second_byte;
+            } else {
+                unsigned char mcu_terminating_byte = out_buf[out_buf_index - 1];
+                out_buf_index--;
+                write_buffer_to_file();
+                
+                assert (out_buf_index == 0);
+                out_buf[out_buf_index++] = mcu_terminating_byte;
+            }
 
         } else {
             bit_index_of_next_mcu_start = input_data_bit_index;
             prev_mcu_terminating_byte = input_data;
 
-            if (input_data_bit_index != 0) {
+            // FIXME: Might need to do this unconditionally, i.e. even with index == 0
+            /*if (input_data_bit_index != 0) {*/
                 out_buf[out_buf_index++] = prev_mcu_terminating_byte;
-            }
+            /*}*/
         }
 
         if (column_index % 2 == 0 && (mcu_counter == expected_mcu_count - 1 || mcu_counter == expected_mcu_count - 2)) {
@@ -345,7 +367,7 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
 
         mcu_counter++;
         column_index++;
-        if (column_index > original_samples_per_line) {
+        if (column_index >= original_mcus_in_row) {
             column_index = 0;
         }
         
@@ -373,6 +395,8 @@ void process_frame()
     original_samples_per_line = read_2_bytes(infile, &bytes_read);     // Samples per line
     int modified_samples_per_line = original_samples_per_line / 2 +
         (original_samples_per_line % 2 == 0 ? 0 : 1);
+    modified_samples_per_line = (modified_samples_per_line % 8 == 0) ?
+        modified_samples_per_line : (modified_samples_per_line + 4);
     
     num_image_components = read_1_byte(infile, &bytes_read);
 
