@@ -351,7 +351,7 @@ void process_scan(huffman_table *dc_table, huffman_table *ac_table)
 
         if (column_index % 2 == 0 && (mcu_counter == expected_mcu_count - 1 || mcu_counter == expected_mcu_count - 2)) {
             // we must add the padding bits 
-            int bits_to_append = 8 - bit_index_of_previous_mcu_end + 1;
+            int bits_to_append = 8 - bit_index_of_previous_mcu_end - 1;
             unsigned char last_byte = out_buf[out_buf_index - 1];
             unsigned char padding = 0xFF;
 
