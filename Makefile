@@ -30,7 +30,7 @@ ifeq ($(STATS), 1)
 	CFLAGS+=-DSTATISTICS
 endif
 
-SOURCE = jpeg-host.c jpeg-cpu.c
+SOURCE = jpeg-host.c bmp.c jpeg-cpu.c
 
 .PHONY: default all dpu host clean tags
 
