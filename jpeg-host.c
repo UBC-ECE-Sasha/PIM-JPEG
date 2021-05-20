@@ -12,7 +12,7 @@
 #include <getopt.h>
 #include <time.h>
 
-#include <host.h>
+#include "PIM-common/host/include/host.h"
 #include "jpeg-host.h"
 #include "jpeg-cpu.h"
 
@@ -580,7 +580,9 @@ static int dpu_main(struct jpeg_options *opts, host_results *results)
 				{
 					rank_status |= (1UL<<rank_id);
 					dbg_printf("Submitted to rank %u status=%s\n", rank_id, to_bin(rank_status, rank_count));
+#ifdef STATISTICS
 					clock_gettime(CLOCK_MONOTONIC, &ctx[rank_id].start_rank);
+#endif // STATISTICS
 					status = scale_rank(dpu_rank, rank_id, rank_input, prepared_file_count, prepared_dpu_count, opts);
 					ctx[rank_id].dpus = rank_input;
 					ctx[rank_id].dpu_count = prepared_dpu_count;

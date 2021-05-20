@@ -1,7 +1,15 @@
 #ifndef _JPEG_HOST__H
 #define _JPEG_HOST__H
 
-#include "common.h"
+#include "PIM-common/common/include/common.h"
+
+#ifndef MAX_FILES_PER_DPU
+#define MAX_FILES_PER_DPU 64
+#endif
+
+#ifndef NR_TASKLETS
+#define NR_TASKLETS 16
+#endif
 
 enum {
 	PROG_OK = 0,

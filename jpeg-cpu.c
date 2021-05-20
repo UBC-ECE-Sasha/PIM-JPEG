@@ -16,7 +16,7 @@
 #define HUFFMAN_TABLE_CLASS_DC 0
 #define HUFFMAN_TABLE_CLASS_AC 1
 
-#define rounded_division(_a, _b) (((_a) + (_b) - 1) / (_b))
+#define rounded_division(_a, _b) (((_a) + (_b)-1) / (_b))
 
 /* We want to emulate the behaviour of 'tjbench <jpg> -scale 1/8'
 	That calls 'process_data_simple_main' and 'decompress_onepass' in turbojpeg
@@ -32,14 +32,15 @@ Decompress    --> Frame rate:         92.177865 fps
 */
 
 /* Markers: CCITT Rec T.81 page 32 */
-enum markers {
+enum markers
+{
 	/* Start Of Frame non-differential, Huffman coding */
 	M_SOF0 = 0xC0,
 	M_SOF1,
 	M_SOF2,
 	M_SOF3,
 
-	M_DHT = 0xC4, 								/* Define Huffman Tables */
+	M_DHT = 0xC4, /* Define Huffman Tables */
 
 	/* Start Of Frame differential, Huffman coding */
 	M_SOF5 = 0xC5,
@@ -52,33 +53,33 @@ enum markers {
 	M_SOF10,
 	M_SOF11,
 
-	M_DAC = 0xCC,								/* Define Arithmetic Coding */
+	M_DAC = 0xCC, /* Define Arithmetic Coding */
 
 	/* Start Of Frame differential, arithmetic coding */
-	M_SOF13,										/* Differential sequential DCT */
-	M_SOF14,										/* Differential progressive DCT */
-	M_SOF15,										/* Differential lossless */
+	M_SOF13, /* Differential sequential DCT */
+	M_SOF14, /* Differential progressive DCT */
+	M_SOF15, /* Differential lossless */
 
-	M_RST_FIRST = 0xD0,						/* Restart interval termination */
-	M_RST_LAST = 0xD7,						/* Restart interval termination */
+	M_RST_FIRST = 0xD0, /* Restart interval termination */
+	M_RST_LAST = 0xD7,	/* Restart interval termination */
 
-	M_SOI = 0xD8,								/* Start Of Image (beginning of datastream) */
-	M_EOI,										/* End Of Image (end of datastream) */
-	M_SOS,										/* Start Of Scan (begins compressed data) */
-	M_DQT,										/* Define quantization table */
+	M_SOI = 0xD8, /* Start Of Image (beginning of datastream) */
+	M_EOI,		  /* End Of Image (end of datastream) */
+	M_SOS,		  /* Start Of Scan (begins compressed data) */
+	M_DQT,		  /* Define quantization table */
 	M_DNL,
 	M_DRI,
 	M_DHP,
 	M_EXP,
-	M_APP_FIRST = 0xE0,						/* Application-specific marker, type N */
+	M_APP_FIRST = 0xE0, /* Application-specific marker, type N */
 	M_APP_LAST = 0xEF,
 	M_EXT_FIRST = 0xF0,
 	M_EXT_LAST = 0xFD,
-	M_COM											/* COMment */
+	M_COM /* COMment */
 };
 
 /* Error exit handler */
-#define ERREXIT(msg)  return -1;
+#define ERREXIT(msg) return -1;
 
 typedef struct jpeg_component_info
 {
@@ -97,7 +98,7 @@ typedef struct huffman_table
 {
 	uint8_t table_class; // see HUFFMAN_TABLE_CLASS_
 	uint8_t dest;
-	uint8_t bits[16]; // BITS: gives the number of codes of each length (1-16)
+	uint8_t bits[16];	  // BITS: gives the number of codes of each length (1-16)
 	uint8_t huffval[256]; // HUFFVAL: actually sum(length[0] .. length[15])
 
 	uint32_t valoffset[18]; // offset into huffval for codes of length k
@@ -113,8 +114,8 @@ typedef struct jpeg_decompressor
 	uint16_t image_height;
 	uint16_t image_width;
 	uint8_t num_components;
-	uint16_t restart_interval; 
-	uint16_t restarts_left; 
+	uint16_t restart_interval;
+	uint16_t restarts_left;
 	uint32_t num_restart_intervals;
 	uint32_t max_h_samp_factor;
 	uint32_t max_v_samp_factor;
@@ -141,11 +142,17 @@ typedef struct jpeg_decompressor
 	uint8_t bits_left;
 } jpeg_decompressor;
 
+/**
+ * Check whether EOF is reached by comparing current ptr location to start location + entire length of file
+ */
 static int eof(jpeg_decompressor *d)
 {
 	return (d->ptr >= d->data + d->length);
 }
 
+/**
+ * Read 1 byte from the file
+ */
 static uint8_t read_byte(jpeg_decompressor *d)
 {
 	uint8_t temp;
@@ -156,7 +163,9 @@ static uint8_t read_byte(jpeg_decompressor *d)
 	return temp;
 }
 
-/* MSB order */
+/**
+ * Read 2 bytes from the file, MSB order
+ */
 static uint16_t read_short(jpeg_decompressor *d)
 {
 	uint16_t temp3;
@@ -172,32 +181,43 @@ static uint16_t read_short(jpeg_decompressor *d)
 	return temp3;
 }
 
+/**
+ * Skip count bytes
+ */
 static void skip_bytes(jpeg_decompressor *d, int count)
 {
 	//printf("Skipping %i bytes\n", count);
+
+	/* If after skipping count bytes we go beyond EOF, then only skip till EOF */
 	if (d->ptr + count > d->data + d->length)
 		d->ptr = d->data + d->length;
 	else
-		d->ptr+=count;
+		d->ptr += count;
 }
 
-/* Skip over an unknown or uninteresting variable-length marker */
+/**
+ * Skip over an unknown or uninteresting variable-length marker
+ */
 static int skip_variable(jpeg_decompressor *d)
 {
-  unsigned short length;
+	unsigned short length;
 
-  /* Get the marker parameter length count */
-  length = read_short(d);
-  /* Length includes itself, so must be at least 2 */
-  if (length < 2)
-    ERREXIT("Erroneous JPEG marker length");
-  length -= 2;
-  /* Skip over the remaining bytes */
+	/* Get the marker parameter length count */
+	length = read_short(d);
+	/* Length includes itself, so must be at least 2 */
+	if (length < 2)
+		ERREXIT("Erroneous JPEG marker length");
+
+	length -= 2;
+	/* Skip over the remaining bytes */
 	skip_bytes(d, length);
 
 	return 0;
 }
 
+/**
+ * Find the next marker (byte with value FF). Swallow consecutive duplicate FF bytes
+ */
 static int next_marker(jpeg_decompressor *d)
 {
 	uint8_t byte;
@@ -215,9 +235,10 @@ static int next_marker(jpeg_decompressor *d)
 		byte = read_byte(d);
 	}
 
-  /* Get marker code byte, swallowing any duplicate FF bytes.  Extra FFs
-   * are legal as pad bytes, so don't count them in discarded_bytes.
-   */
+	/**
+	 * Get marker code byte, swallowing any duplicate FF bytes.  Extra FFs
+	 * are legal as pad bytes, so don't count them in discarded_bytes.
+	 */
 	do
 	{
 		if (eof(d))
@@ -228,12 +249,16 @@ static int next_marker(jpeg_decompressor *d)
 
 	if (discarded_bytes)
 		printf("WARNING: discarded %u bytes\n", discarded_bytes);
-  return marker;
+
+	return marker;
 }
 
+/**
+ * Read whether we are at valid START OF IMAGE
+ */
 static int read_jpeg_header(jpeg_decompressor *d)
 {
-	uint8_t c1=0, c2=0;
+	uint8_t c1 = 0, c2 = 0;
 
 	if (!eof(d))
 	{
@@ -243,13 +268,16 @@ static int read_jpeg_header(jpeg_decompressor *d)
 	if (c1 != 0xFF || c2 != M_SOI)
 		printf("Not JPEG: %i %i\n", c1, c2);
 
-	//printf("Got JPEG marker!\n");
+	printf("Got JPEG marker!\n");
 
 	return 0;
 }
 
 #define MIN_HUFFMAN_TABLE_LENGTH 17 // for an empty table
 
+/**
+ * Extract the Huffman tables
+ */
 static void process_DHT(jpeg_decompressor *d)
 {
 	unsigned int length;
@@ -257,10 +285,11 @@ static void process_DHT(jpeg_decompressor *d)
 	unsigned int total;
 	unsigned int num_tables = 0;
 
-	length = read_short(d);      			// Lf
+	length = read_short(d); // Lf
 	//printf("%s header\n", __func__);
 	length -= 2;
 
+	/* Page 41: Table B.5 */
 	// keep reading Huffman tables until we run out of data
 	while (length >= MIN_HUFFMAN_TABLE_LENGTH)
 	{
@@ -269,20 +298,20 @@ static void process_DHT(jpeg_decompressor *d)
 		uint8_t temp = read_byte(d);
 		length -= 1;
 		d->huffman[num_tables].table_class = temp >> 4; // Tc
-		d->huffman[num_tables].dest = temp & 0xF;			// Th
+		d->huffman[num_tables].dest = temp & 0xF;		// Th
 
-		for (i=0; i < 16; i++)
+		for (i = 0; i < 16; i++)
 		{
 			d->huffman[num_tables].bits[i] = read_byte(d); // Li
 			total += d->huffman[num_tables].bits[i];
 		}
 		length -= 16;
 
-		for (i=0; i < total; i++)
-			d->huffman[num_tables].huffval[i] = read_byte(d);	// Vij
+		for (i = 0; i < total; i++)
+			d->huffman[num_tables].huffval[i] = read_byte(d); // Vij
 		length -= total;
 
-/*
+		/*
 		printf("Table class: %u\n", d->huffman[num_tables].table_class);
 		printf("destination: %u\n", d->huffman[num_tables].dest);
 		printf("lengths: %i %i %i %i %i %i %i %i %i %i %i %i %i %i %i %i\n",
@@ -312,39 +341,45 @@ static void process_DHT(jpeg_decompressor *d)
 	d->num_huffman_tables = num_tables;
 }
 
+/**
+ * Decode Start Of Frame
+ */
 static void process_SOFn(int marker, jpeg_decompressor *d)
 {
 	unsigned int length;
 	unsigned int i;
 
-	length = read_short(d);      			// Lf
+	length = read_short(d); // Lf
 	//printf("%s length=%u\n", __func__, length);
 
 	/* Page 36: Table B.2 */
-	d->data_precision = read_byte(d); 					// P
-	d->image_height = read_short(d);						// Y
-	d->image_width = read_short(d);						// X
-	d->num_components = read_byte(d);					// Nf
-	for (i=0; i < d->num_components; i++)
+	d->data_precision = read_byte(d); // P
+	d->image_height = read_short(d);  // Y
+	d->image_width = read_short(d);	  // X
+	d->num_components = read_byte(d); // Nf
+	for (i = 0; i < d->num_components; i++)
 	{
 		d->comp_info[i].component_id = read_byte(d); // Ci
 		uint8_t factor = read_byte(d);
 		d->comp_info[i].h_samp_factor = (factor >> 4) & 0xF; // Hi
-		d->comp_info[i].v_samp_factor = factor & 0xF; // Vi
-		d->comp_info[i].quant_tbl_no = read_byte(d); // Tqi
+		d->comp_info[i].v_samp_factor = factor & 0xF;		 // Vi
+		d->comp_info[i].quant_tbl_no = read_byte(d);		 // Tqi
 
 		printf("Index: %u, H-samp factor: %u, V-samp factor: %u, Quant table: %u\n", d->comp_info[i].component_id,
-			d->comp_info[i].h_samp_factor,
-			d->comp_info[i].v_samp_factor,
-			d->comp_info[i].quant_tbl_no);
+			   d->comp_info[i].h_samp_factor,
+			   d->comp_info[i].v_samp_factor,
+			   d->comp_info[i].quant_tbl_no);
 	}
 }
 
+/**
+ * Decode Restart Interval
+ */
 static int process_DRI(jpeg_decompressor *d)
 {
 	unsigned int length;
 
-	length = read_short(d);      /* usual parameter length count */
+	length = read_short(d); /* usual parameter length count */
 	if (length != 4)
 		printf("Unexpected length in restart interval (saw %u)\n", length);
 
@@ -363,26 +398,26 @@ static void reset_decoder(jpeg_decompressor *d)
 
 int process_restart(jpeg_decompressor *d)
 {
-			int marker = next_marker(d);
-			switch (marker)
-			{
-			case -1:
-				printf("Error: EOF while looking for RST\n");
-				return -1;
+	int marker = next_marker(d);
+	switch (marker)
+	{
+	case -1:
+		printf("Error: EOF while looking for RST\n");
+		return -1;
 
-			case M_EOI:
-				printf("EOI after %u restarts\n", d->num_restart_intervals);
-				return -1;
+	case M_EOI:
+		printf("EOI after %u restarts\n", d->num_restart_intervals);
+		return -1;
 
-			case M_RST_FIRST ... M_RST_LAST:
-				d->num_restart_intervals++;
-				reset_decoder(d);
-				printf("Found restart %u (%u)\n", marker - M_RST_FIRST, d->num_restart_intervals);
-				return 0;
+	case M_RST_FIRST ... M_RST_LAST:
+		d->num_restart_intervals++;
+		reset_decoder(d);
+		printf("Found restart %u (%u)\n", marker - M_RST_FIRST, d->num_restart_intervals);
+		return 0;
 
-			default:
-				printf("Found unexpected marker 0x%x\n", marker);
-			}
+	default:
+		printf("Found unexpected marker 0x%x\n", marker);
+	}
 
 	return -1;
 }
@@ -390,13 +425,14 @@ int process_restart(jpeg_decompressor *d)
 /* F.2.2.3 Decode */
 
 /**
-	Get number of specified bits from the buffer
-*/
+ * Get number of specified bits from the buffer
+ */
 static uint8_t get_bits(jpeg_decompressor *d, uint8_t num_bits)
 {
 	uint8_t b;
 	uint32_t c;
 	uint8_t temp;
+
 	while (d->bits_left < num_bits)
 	{
 		// read a byte and decode it, if it is 0xFF
@@ -439,7 +475,7 @@ static uint16_t huff_decode(jpeg_decompressor *d, huffman_table *table)
 		code <<= 1;
 		l++;
 	}
-	
+
 	return 0;
 }
 
@@ -448,18 +484,18 @@ static int decode_mcu(jpeg_decompressor *d, uint8_t *buffer)
 {
 	uint32_t block;
 
-		printf("%s: left %u\n", __func__, d->restarts_left);
-		if (d->restart_interval)
+	printf("%s: left %u\n", __func__, d->restarts_left);
+	if (d->restart_interval)
+	{
+		if (d->restarts_left == 0)
 		{
-		 	if (d->restarts_left == 0)
+			if (process_restart(d) != 0)
 			{
-				if (process_restart(d) != 0)
-				{
-					printf("failed processing restart\n");
-					return -1;
-				}
+				printf("failed processing restart\n");
+				return -1;
 			}
 		}
+	}
 
 	for (block = 0; block < d->blocks_per_MCU; block++)
 	{
@@ -496,8 +532,8 @@ static void build_huffman_tables(jpeg_decompressor *d)
 	// huffsize is an array of lengths, indexed by symbol number
 	for (length = 1; length <= 16; length++)
 	{
-		index = d->huffman[0].bits[length-1];
-		if (p + index > 256)   /* protect against table overrun */
+		index = d->huffman[0].bits[length - 1];
+		if (p + index > 256) /* protect against table overrun */
 		{
 			printf("Huffman table overrun\n");
 			return;
@@ -532,23 +568,23 @@ static void build_huffman_tables(jpeg_decompressor *d)
 		si++;
 	}
 
-  /* Figure F.15: generate decoding tables for bit-sequential decoding */
+	/* Figure F.15: generate decoding tables for bit-sequential decoding */
 
 	p = 0;
 	for (length = 1; length <= 16; length++)
 	{
-		if (d->huffman[0].bits[length-1])
+		if (d->huffman[0].bits[length - 1])
 		{
 			/* valoffset[l] = huffval[] index of 1st symbol of code length l,
 			* minus the minimum code of length l
 			*/
 			d->huffman[0].valoffset[length] = p - huffcode[p];
-			p += d->huffman[0].bits[length-1];
+			p += d->huffman[0].bits[length - 1];
 			d->huffman[0].maxcode[length] = huffcode[p - 1]; /* maximum code of length l */
 		}
 		else
 		{
-			d->huffman[0].maxcode[length] = -1;    /* -1 if no codes of this length */
+			d->huffman[0].maxcode[length] = -1; /* -1 if no codes of this length */
 		}
 	}
 	d->huffman[0].valoffset[17] = 0;
@@ -561,10 +597,10 @@ static int process_scan(jpeg_decompressor *d)
 	unsigned int num_ecs_segments;
 
 	// read the scan header (SOS)
-	length = read_short(d);      							// Ls
+	length = read_short(d); // Ls
 	//printf("%s header length=%u\n", __func__, length);
 
-	d->comps_in_scan = read_byte(d);						// Ns
+	d->comps_in_scan = read_byte(d); // Ns
 
 	printf("Num components: %u\n", d->comps_in_scan);
 	if (d->comps_in_scan == 1)
@@ -590,27 +626,27 @@ static int process_scan(jpeg_decompressor *d)
 		d->blocks_per_MCU = 0;
 	}
 
-	for (uint8_t i=0; i < d->comps_in_scan; i++)
+	for (uint8_t i = 0; i < d->comps_in_scan; i++)
 	{
-		d->cur_comp_info[i].component_id = read_byte(d);	// Csj
+		d->cur_comp_info[i].component_id = read_byte(d); // Csj
 		uint8_t tdta = read_byte(d);
-		d->cur_comp_info[i].dc_tbl_no = tdta >> 4;			// Tdj
-		d->cur_comp_info[i].ac_tbl_no = tdta & 0xF;			// Taj
-		
+		d->cur_comp_info[i].dc_tbl_no = tdta >> 4;	// Tdj
+		d->cur_comp_info[i].ac_tbl_no = tdta & 0xF; // Taj
+
 		printf("[%u] DC entropy table = %u, AC entropy table = %u\n",
-			d->cur_comp_info[i].component_id,
-			d->cur_comp_info[i].dc_tbl_no,
-			d->cur_comp_info[i].ac_tbl_no);
+			   d->cur_comp_info[i].component_id,
+			   d->cur_comp_info[i].dc_tbl_no,
+			   d->cur_comp_info[i].ac_tbl_no);
 
 		d->blocks_per_MCU += d->comp_info[i].h_samp_factor * d->comp_info[i].v_samp_factor;
 	}
 	printf("Blocks per MCU: %u\n", d->blocks_per_MCU);
 
-	d->ss = read_byte(d);											// Ss
-	d->se = read_byte(d);											// Se
+	d->ss = read_byte(d); // Ss
+	d->se = read_byte(d); // Se
 	uint8_t A = read_byte(d);
-	d->Ah = A >> 4;													// Ah
-	d->Al = A & 0xF;													// Al
+	d->Ah = A >> 4;	 // Ah
+	d->Al = A & 0xF; // Al
 
 	//printf("ss=%u se=%u Ah=%u Al=%u\n", d->ss, d->se, d->Ah, d->Al);
 
@@ -621,7 +657,7 @@ static int process_scan(jpeg_decompressor *d)
 		// set the maximum sampling factors
 		d->max_h_samp_factor = 1;
 		d->max_v_samp_factor = 1;
-		for (uint8_t i=0; i < d->comps_in_scan; i++)
+		for (uint8_t i = 0; i < d->comps_in_scan; i++)
 		{
 			d->max_h_samp_factor = MAX(d->max_h_samp_factor, d->comp_info[i].h_samp_factor);
 			d->max_v_samp_factor = MAX(d->max_v_samp_factor, d->comp_info[i].v_samp_factor);
@@ -644,7 +680,7 @@ static int process_scan(jpeg_decompressor *d)
 	//for (comp_index = 0; comp_index < d->comps_in_scan; comp_index++)
 	{
 		//jpeg_decompress_component *component = d->cur_comp_info[comp_index];
-		
+
 		//MCU_blocks = component->h_samp_factor * component->v_samp_factor;
 
 		// calculate number of blocks in last MCU column & row
@@ -664,17 +700,17 @@ int decompress_scanline(jpeg_decompressor *d)
 	uint8_t mcu_buffer[64];
 
 	//num_ecs_segments = d->MCUs_per_row / restart_interval;
- 	d->restarts_left = d->restart_interval;
+	d->restarts_left = d->restart_interval;
 	d->num_restart_intervals = 0;
 
 	// precalculate decoding info
-	
+
 	//uint32_t row;
 	//for (row = 0; row < d->rows_per_scan; row++)
 	{
 		// each entropy-coded segment except the last one shall contain 'restart_interval' MCUs
 		uint32_t mcu;
-		for (mcu=0; mcu < d->MCUs_per_row; mcu++)
+		for (mcu = 0; mcu < d->MCUs_per_row; mcu++)
 		{
 			printf("Decoding MCU %u\n", mcu);
 			if (decode_mcu(d, mcu_buffer) != 0)
@@ -683,7 +719,7 @@ int decompress_scanline(jpeg_decompressor *d)
 				return -1;
 			}
 
-			for (uint8_t i=0; i < d->comps_in_scan; i++)
+			for (uint8_t i = 0; i < d->comps_in_scan; i++)
 			{
 				uint32_t yindex, xindex;
 				for (yindex = 0; yindex < d->comp_info[i].v_samp_factor; yindex++)
@@ -715,7 +751,7 @@ static int find_frame(jpeg_decompressor *d)
 			printf("Error: EOF while looking for SOF\n");
 			return -1;
 
-		case M_SOF0 ... M_SOF3:                /* Baseline */
+		case M_SOF0 ... M_SOF3: /* Baseline */
 			//printf("SOF non-differential huffman\n");
 			process_SOFn(marker, d);
 			found = 1;
@@ -739,7 +775,7 @@ static int find_frame(jpeg_decompressor *d)
 			found = 1;
 			break;
 
-		case M_EOI:                 /* in case it's a tables-only JPEG stream */
+		case M_EOI: /* in case it's a tables-only JPEG stream */
 			printf("Error: Hit EOI while looking for frame\n");
 			return -1;
 
@@ -747,8 +783,8 @@ static int find_frame(jpeg_decompressor *d)
 			process_DRI(d);
 			break;
 
-		default:                    /* Anything else just gets skipped */
-			skip_variable(d);          /* we assume it has a parameter count... */
+		default:			  /* Anything else just gets skipped */
+			skip_variable(d); /* we assume it has a parameter count... */
 		}
 	}
 
@@ -784,7 +820,7 @@ static int find_scan(jpeg_decompressor *d)
 			process_DHT(d);
 			break;
 
-		case M_EOI:                 /* in case it's a tables-only JPEG stream */
+		case M_EOI: /* in case it's a tables-only JPEG stream */
 			printf("Error: Hit EOI while looking for scan\n");
 			return -1;
 
@@ -792,9 +828,9 @@ static int find_scan(jpeg_decompressor *d)
 			skip_variable(d);
 			break;
 
-		default:                    /* Anything else just gets skipped */
+		default: /* Anything else just gets skipped */
 			printf("<%X>\n", marker);
-			skip_variable(d);          /* we assume it has a parameter count... */
+			skip_variable(d); /* we assume it has a parameter count... */
 			break;
 		}
 	}
@@ -840,7 +876,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *buffer)
 		ret = find_scan(&decompressor);
 	}
 
-/*
+	/*
 	// now write the data out as BMP
 	bmp_object image;
 	uint8_t *ptr;
