@@ -81,13 +81,32 @@ enum markers
 /* Error exit handler */
 #define ERREXIT(msg) return -1;
 
+typedef struct quantization_table
+{
+	uint8_t exists;
+	uint32_t table[64];
+	uint8_t precision;
+} quantization_table;
+
+uint8_t zigzag_order[] = {
+	0, 1, 8, 16, 9, 2, 3, 10,
+	17, 24, 32, 25, 18, 11, 4, 5,
+	12, 19, 26, 33, 40, 48, 41, 34,
+	27, 20, 13, 6, 7, 14, 21, 28,
+	35, 42, 49, 56, 57, 50, 43, 36,
+	29, 22, 15, 23, 30, 37, 44, 51,
+	58, 59, 52, 45, 38, 31, 39, 46,
+	53, 60, 61, 54, 47, 55, 62, 63};
+
 typedef struct jpeg_component_info
 {
+	uint8_t exists;
 	uint8_t component_id;
-	uint8_t component_index;
 	uint8_t h_samp_factor; // also MCU_width
 	uint8_t v_samp_factor; // also MCU_height
 	uint8_t quant_tbl_no;
+
+	uint8_t component_index;
 	uint8_t dc_tbl_no;
 	uint8_t ac_tbl_no;
 	uint16_t width_in_blocks;
@@ -107,19 +126,25 @@ typedef struct huffman_table
 
 typedef struct jpeg_decompressor
 {
-	char *ptr;
-	char *data;
-	uint64_t length;
+	char *ptr;		 // current position within JPEG
+	char *data;		 // start position of JPEG
+	uint64_t length; // total length of JPEG
+
+	uint8_t valid; // indicates whether file is actually a JPEG file
+
+	quantization_table quant_table[4]; // the 4 quantization tables of a JPEG
+
 	uint8_t data_precision;
 	uint16_t image_height;
 	uint16_t image_width;
 	uint8_t num_components;
+	jpeg_component_info comp_info[MAX_COMPS_IN_SCAN];
+
 	uint16_t restart_interval;
 	uint16_t restarts_left;
 	uint32_t num_restart_intervals;
 	uint32_t max_h_samp_factor;
 	uint32_t max_v_samp_factor;
-	jpeg_component_info comp_info[MAX_COMPS_IN_SCAN];
 	huffman_table huffman[4];
 	uint32_t num_huffman_tables;
 
@@ -198,7 +223,7 @@ static void skip_bytes(jpeg_decompressor *d, int count)
 /**
  * Skip over an unknown or uninteresting variable-length marker
  */
-static int skip_variable(jpeg_decompressor *d)
+static int skip_marker(jpeg_decompressor *d)
 {
 	unsigned short length;
 
@@ -256,7 +281,7 @@ static int next_marker(jpeg_decompressor *d)
 /**
  * Read whether we are at valid START OF IMAGE
  */
-static int read_jpeg_header(jpeg_decompressor *d)
+static void read_jpeg_header(jpeg_decompressor *d)
 {
 	uint8_t c1 = 0, c2 = 0;
 
@@ -266,17 +291,109 @@ static int read_jpeg_header(jpeg_decompressor *d)
 		c2 = read_byte(d);
 	}
 	if (c1 != 0xFF || c2 != M_SOI)
-		printf("Not JPEG: %i %i\n", c1, c2);
+	{
+		d->valid = 0;
+		printf("Error: Not JPEG: %X %X\n", c1, c2);
+	}
+	else
+	{
+		d->valid = 1;
+		printf("Got JPEG marker: %X %X\n", c1, c2);
+	}
+}
 
-	printf("Got JPEG marker!\n");
+/**
+ * Read quantization table 
+ * Page 40: Table B.4
+ */
+static void process_DQT(jpeg_decompressor *d)
+{
+	int length;
 
-	return 0;
+	length = read_short(d); // Lq
+	length -= 2;
+
+	while (length > 0)
+	{
+		uint8_t qt_info = read_byte(d);
+		length -= 1;
+
+		uint8_t table_id = qt_info & 0xF; // Tq
+		if (table_id > 3)
+		{
+			d->valid = 0;
+			printf("Error: Got quantization table ID %d, ID should be between 0 and 3\n", table_id);
+			return;
+		}
+		d->quant_table[table_id].exists = 1;
+
+		uint8_t precision = (qt_info >> 4) & 0xF; // Pq
+		if (precision == 0)
+		{
+			// 8 bit precision
+			d->quant_table[table_id].precision = 8;
+
+			for (int i = 0; i < 64; i++)
+			{
+				d->quant_table[table_id].table[zigzag_order[i]] = read_byte(d); // Qk
+			}
+			length -= 64;
+		}
+		else
+		{
+			// 16 bit precision
+			d->quant_table[table_id].precision = 16;
+
+			for (int i = 0; i < 64; i++)
+			{
+				d->quant_table[table_id].table[zigzag_order[i]] = read_short(d); // Qk
+			}
+			length -= 128;
+		}
+	}
+
+	if (length != 0)
+	{
+		d->valid = 0;
+		printf("Error: Actual quantization table length does not match length field\n");
+	}
+}
+
+/**
+ * Read Start Of Frame
+ * Page 36: Table B.2
+ */
+static void process_SOFn(jpeg_decompressor *d)
+{
+	// TODO: check whether SOF has already been processed
+	unsigned int length;
+	unsigned int i;
+
+	length = read_short(d); // Lf
+
+	d->data_precision = read_byte(d); // P
+	d->image_height = read_short(d);  // Y
+	d->image_width = read_short(d);	  // X
+	d->num_components = read_byte(d); // Nf
+
+	for (i = 0; i < d->num_components; i++)
+	{
+		d->comp_info[i].exists = 1;
+
+		d->comp_info[i].component_id = read_byte(d); // Ci
+		uint8_t factor = read_byte(d);
+		d->comp_info[i].h_samp_factor = (factor >> 4) & 0xF; // Hi
+		d->comp_info[i].v_samp_factor = factor & 0xF;		 // Vi
+		d->comp_info[i].quant_tbl_no = read_byte(d);		 // Tqi
+	}
+	// TODO: maybe add more error checking here (check whether length is correct, whether image_height, image_width are correct)
 }
 
 #define MIN_HUFFMAN_TABLE_LENGTH 17 // for an empty table
 
 /**
- * Extract the Huffman tables
+ * Read Huffman tables
+ * Page 41: Table B.5
  */
 static void process_DHT(jpeg_decompressor *d)
 {
@@ -289,7 +406,6 @@ static void process_DHT(jpeg_decompressor *d)
 	//printf("%s header\n", __func__);
 	length -= 2;
 
-	/* Page 41: Table B.5 */
 	// keep reading Huffman tables until we run out of data
 	while (length >= MIN_HUFFMAN_TABLE_LENGTH)
 	{
@@ -339,37 +455,6 @@ static void process_DHT(jpeg_decompressor *d)
 	if (length)
 		printf("ERROR: %u bytes left over in DHT\n", length);
 	d->num_huffman_tables = num_tables;
-}
-
-/**
- * Decode Start Of Frame
- */
-static void process_SOFn(int marker, jpeg_decompressor *d)
-{
-	unsigned int length;
-	unsigned int i;
-
-	length = read_short(d); // Lf
-	//printf("%s length=%u\n", __func__, length);
-
-	/* Page 36: Table B.2 */
-	d->data_precision = read_byte(d); // P
-	d->image_height = read_short(d);  // Y
-	d->image_width = read_short(d);	  // X
-	d->num_components = read_byte(d); // Nf
-	for (i = 0; i < d->num_components; i++)
-	{
-		d->comp_info[i].component_id = read_byte(d); // Ci
-		uint8_t factor = read_byte(d);
-		d->comp_info[i].h_samp_factor = (factor >> 4) & 0xF; // Hi
-		d->comp_info[i].v_samp_factor = factor & 0xF;		 // Vi
-		d->comp_info[i].quant_tbl_no = read_byte(d);		 // Tqi
-
-		printf("Index: %u, H-samp factor: %u, V-samp factor: %u, Quant table: %u\n", d->comp_info[i].component_id,
-			   d->comp_info[i].h_samp_factor,
-			   d->comp_info[i].v_samp_factor,
-			   d->comp_info[i].quant_tbl_no);
-	}
 }
 
 /**
@@ -753,25 +838,25 @@ static int find_frame(jpeg_decompressor *d)
 
 		case M_SOF0 ... M_SOF3: /* Baseline */
 			//printf("SOF non-differential huffman\n");
-			process_SOFn(marker, d);
+			process_SOFn(d);
 			found = 1;
 			break;
 
 		case M_SOF5 ... M_SOF7:
 			//printf("SOF differential huffman\n");
-			process_SOFn(marker, d);
+			process_SOFn(d);
 			found = 1;
 			break;
 
 		case M_SOF9 ... M_SOF11:
 			//printf("SOF non-differential arithmetic\n");
-			process_SOFn(marker, d);
+			process_SOFn(d);
 			found = 1;
 			break;
 
 		case M_SOF13 ... M_SOF15:
 			//printf("SOF differential arithmetic\n");
-			process_SOFn(marker, d);
+			process_SOFn(d);
 			found = 1;
 			break;
 
@@ -783,8 +868,8 @@ static int find_frame(jpeg_decompressor *d)
 			process_DRI(d);
 			break;
 
-		default:			  /* Anything else just gets skipped */
-			skip_variable(d); /* we assume it has a parameter count... */
+		default:			/* Anything else just gets skipped */
+			skip_marker(d); /* we assume it has a parameter count... */
 		}
 	}
 
@@ -825,17 +910,102 @@ static int find_scan(jpeg_decompressor *d)
 			return -1;
 
 		case M_APP_FIRST ... M_APP_LAST:
-			skip_variable(d);
+			skip_marker(d);
 			break;
 
 		default: /* Anything else just gets skipped */
 			printf("<%X>\n", marker);
-			skip_variable(d); /* we assume it has a parameter count... */
+			skip_marker(d); /* we assume it has a parameter count... */
 			break;
 		}
 	}
 
 	return -2;
+}
+
+static int read_marker(jpeg_decompressor *d)
+{
+	int marker;
+
+	marker = next_marker(d);
+	switch (marker)
+	{
+	case -1:
+		d->valid = 0;
+		printf("Error: Read past EOF\n");
+		break;
+
+	case M_APP_FIRST ... M_APP_LAST:
+		printf("Got APPN marker: FF %X\n", marker);
+		skip_marker(d);
+		break;
+
+	case M_DQT:
+		printf("Got DQT marker: FF %X\n", marker);
+		process_DQT(d);
+		break;
+
+	case M_SOF0 ... M_SOF3:
+	case M_SOF5 ... M_SOF7:
+	case M_SOF9 ... M_SOF11:
+	case M_SOF13 ... M_SOF15:
+		printf("Got SOF marker: FF %X\n", marker);
+		process_SOFn(d);
+		break;
+
+	default:
+		d->valid = 0;
+		printf("Error: Unhandled marker: FF %X\n", marker);
+		break;
+	}
+}
+
+/**
+ * Helper function to print out filled in values of the JPEG decompressor
+ */
+static void print_jpeg_decompressor(jpeg_decompressor *d)
+{
+	printf("\n********** DQT **********\n");
+
+	for (int i = 0; i < 4; i++)
+	{
+		printf("Table ID: %d\n", i);
+		if (!d->quant_table[i].exists)
+		{
+			printf("Does not exist\n");
+		}
+		else
+		{
+			printf("Precision: %d\n", d->quant_table[i].precision);
+			for (int j = 0; j < 64; j++)
+			{
+				if (j % 8 == 0)
+				{
+					printf("\n");
+				}
+				printf("%d ", d->quant_table[i].table[j]);
+			}
+			printf("\n");
+		}
+		printf("\n");
+	}
+
+	printf("\n********** SOF **********\n");
+
+	printf("Precision: %d\n", d->data_precision);
+	printf("Height: %d\n", d->image_height);
+	printf("Width: %d\n", d->image_width);
+	printf("Number of image components: %d\n\n", d->num_components);
+	for (int i = 0; i < 4; i++)
+	{
+		if (d->comp_info[i].exists)
+		{
+			printf("Component ID: %d\n", d->comp_info[i].component_id);
+			printf("H-samp factor: %d\n", d->comp_info[i].h_samp_factor);
+			printf("V-samp factor: %d\n", d->comp_info[i].v_samp_factor);
+			printf("Quantization table ID: %d\n\n", d->comp_info[i].quant_tbl_no);
+		}
+	}
 }
 
 void jpeg_cpu_scale(uint64_t file_length, char *buffer)
@@ -849,7 +1019,25 @@ void jpeg_cpu_scale(uint64_t file_length, char *buffer)
 	decompressor.get_buffer = 0;
 	decompressor.bits_left = 0;
 
+	for (int i = 0; i < 4; i++)
+	{
+		// mark table fields as non existent first
+		decompressor.quant_table[i].exists = 0;
+		decompressor.quant_table[i].precision = 0;
+
+		decompressor.comp_info[i].exists = 0;
+	}
+
 	read_jpeg_header(&decompressor);
+
+	while (decompressor.valid)
+	{
+		read_marker(&decompressor);
+	}
+
+	print_jpeg_decompressor(&decompressor);
+
+	return;
 
 	// there should be a single frame in the buffer
 	if (find_frame(&decompressor) == 0)
