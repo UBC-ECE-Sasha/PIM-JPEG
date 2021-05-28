@@ -12,7 +12,8 @@
 #include <getopt.h>
 #include <time.h>
 
-#include "PIM-common/host/include/host.h"
+// #include "PIM-common/host/include/host.h"
+#include "host.h"
 #include "jpeg-host.h"
 #include "jpeg-cpu.h"
 

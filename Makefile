@@ -1,5 +1,6 @@
+IDIR = include
 CC = gcc
-CFLAGS = --std=c99 -O3 -g -Wall -Wextra -I ../PIM-common/common/include -I ../PIM-common/host/include -DSEQREAD_CACHE_SIZE=$(SEQREAD_CACHE_SIZE)
+CFLAGS = --std=c99 -O3 -g -Wall -Wextra -I $(IDIR) -I ./PIM-common/common/include -I ./PIM-common/host/include -DSEQREAD_CACHE_SIZE=$(SEQREAD_CACHE_SIZE)
 DPU_OPTS = `dpu-pkg-config --cflags --libs dpu`
 
 # define DEBUG in the source if we are debugging
@@ -30,7 +31,7 @@ ifeq ($(STATS), 1)
 	CFLAGS+=-DSTATISTICS
 endif
 
-SOURCE = jpeg-host.c bmp.c jpeg-cpu.c
+SOURCE = src/jpeg-host.c src/bmp.c src/jpeg-cpu.c
 
 .PHONY: default all dpu host clean tags
 
@@ -39,7 +40,7 @@ default: all
 all: dpu host
 
 clean:
-	$(RM) host-*
+	$(RM) src/host-*
 	$(MAKE) -C dpu-grep $@
 
 dpu:

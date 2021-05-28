@@ -1,7 +1,7 @@
 #ifndef _JPEG_HOST__H
 #define _JPEG_HOST__H
 
-#include "PIM-common/common/include/common.h"
+#include "common.h"
 
 #ifndef MAX_FILES_PER_DPU
 #define MAX_FILES_PER_DPU 64
