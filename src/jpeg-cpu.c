@@ -423,23 +423,23 @@ static void process_SOS(JpegDecompressor *d) {
 //   return -1;
 // }
 
-/* F.2.2.3 Decode */
-
 /**
- * Get number of specified bits from the buffer
+ * Get the number of specified bits from the buffer
  */
-static uint8_t get_bits(JpegDecompressor *d, uint8_t num_bits) {
+static int get_bits(JpegDecompressor *d, uint32_t num_bits) {
   uint8_t b;
   uint32_t c;
-  uint8_t temp;
+  int temp = 0;
+  if (num_bits == 0) {
+    return temp;
+  }
 
+  // TODO: handle restart intervals
   while (d->bits_left < num_bits) {
     // read a byte and decode it, if it is 0xFF
     b = read_byte(d);
     c = b;
-    printf("Read byte 0x%x\n", b);
     while (b == 0xFF) {
-      printf("Warning: got 0xFF byte\n");
       b = read_byte(d);
       if (b == 0)
         c = 0xFF;
@@ -448,101 +448,147 @@ static uint8_t get_bits(JpegDecompressor *d, uint8_t num_bits) {
     }
 
     // add the new bits to the buffer (MSB aligned)
-    // printf("before: buffer: 0x%08X (left %u)\n", d->get_buffer,
-    // d->bits_left);
     d->get_buffer |= c << (32 - 8 - d->bits_left);
     d->bits_left += 8;
-    // printf("after: buffer: 0x%08X (left %u)\n", d->get_buffer, d->bits_left);
   }
 
   temp = d->get_buffer >> (32 - num_bits);
-  printf("Getting %u bits: 0x%u\n", num_bits, temp);
   d->get_buffer <<= num_bits;
   d->bits_left -= num_bits;
-  // printf("remain: buffer: 0x%08X\n", d->get_buffer);
   return temp;
 }
 
-static uint16_t huff_decode(JpegDecompressor *d, HuffmanTable *table) {
-  uint32_t l = 1;
-  uint16_t code;
-  code = get_bits(d, 1);
+/**
+ * Read Huffman coded bitstream bit by bit to form a Huffman code, then return the value which matches
+ * this code. Value is read from the Huffman table formed when reading in the JPEG header
+ */
+static uint8_t huff_decode(JpegDecompressor *d, HuffmanTable *h_table) {
+  uint32_t code = 0;
 
-  // while (code > table->maxcode[l])
-  // {
-  // 	code <<= 1;
-  // 	l++;
-  // }
+  for (int i = 0; i < 16; i++) {
+    int bit = get_bits(d, 1);
+    code = (code << 1) | bit;
+    for (int j = h_table->valoffset[i]; j < h_table->valoffset[i + 1]; j++) {
+      if (code == h_table->codes[j]) {
+        return h_table->huffval[j];
+      }
+    }
+  }
+
+  return -1;
+}
+
+/* F.2.1.2 Decode 8x8 block data unit */
+static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int *previous_dcs) {
+  HuffmanTable *dc_table = &d->dc_huffman_tables[d->color_components[component_index].dc_huffman_table_id];
+  HuffmanTable *ac_table = &d->ac_huffman_tables[d->color_components[component_index].ac_huffman_table_id];
+
+  // Get DC value for this 8x8 MCU block
+  uint8_t dc_length = huff_decode(d, dc_table);
+  // TODO: write better error handling system
+  // TODO: acknowledge Everything You Need to Know About JPEG
+  if (dc_length == (uint8_t)-1) {
+    printf("Error: Invalid DC code\n");
+    return -1;
+  }
+  if (dc_length > 11) {
+    printf("Error: DC coefficient length greater than 11\n");
+    return -1;
+  }
+
+  int coeff = get_bits(d, dc_length);
+  if (dc_length != 0 && coeff < (1 << (dc_length - 1))) {
+    coeff -= (1 << dc_length) - 1;
+  }
+  buffer[0] = coeff + *previous_dcs;
+  *previous_dcs = buffer[0];
+
+  // Get the AC values for this MCU block
+  int i = 1;
+  while (i < 64) {
+    uint8_t ac_length = huff_decode(d, ac_table);
+    if (ac_length == (uint8_t)-1) {
+      printf("Error: Invalid AC code\n");
+      return -1;
+    }
+
+    // Got 0x00, fill remaining MCU block with 0s
+    if (ac_length == 0x00) {
+      while (i < 64) {
+        buffer[ZIGZAG_ORDER[i++]] = 0;
+      }
+      break;
+    }
+
+    // MCU block not entirely filled yet, continue reading
+    uint8_t num_zeroes = (ac_length >> 4) & 0x0F;
+    uint8_t coeff_length = ac_length & 0x0F;
+    coeff = 0;
+
+    // Got 0xF0, skip 16 0s
+    if (ac_length == 0xF0) {
+      num_zeroes = 16;
+    }
+
+    if (i + num_zeroes >= 64) {
+      printf("Error: Invalid AC code - zeros exceeded MCU length");
+      return -1;
+    }
+    for (int j = 0; j < num_zeroes; j++) {
+      buffer[ZIGZAG_ORDER[i++]] = 0;
+    }
+
+    if (coeff_length > 10) {
+      printf("Error: AC coefficient length greater than 10\n");
+      return -1;
+    }
+    if (coeff_length != 0) {
+      coeff = get_bits(d, coeff_length);
+      if (coeff < (1 << (coeff_length - 1))) {
+        coeff -= (1 << coeff_length) - 1;
+      }
+      buffer[ZIGZAG_ORDER[i++]] = coeff;
+    }
+  }
 
   return 0;
 }
 
-/* F.2.1.2 Decode 8x8 block data unit */
-// static int decode_mcu(JpegDecompressor *d, uint8_t *buffer) {
-//   uint32_t block;
+/**
+ * Decode the Huffman coded bitstream
+ */
+static MCU *decompress_scanline(JpegDecompressor *d) {
+  uint32_t mcu_height = (d->image_height + 7) / 8;
+  uint32_t mcu_width = (d->image_width + 7) / 8;
+  int total_mcus = mcu_height * mcu_width;
 
-//   printf("%s: left %u\n", __func__, d->restarts_left);
-//   if (d->restart_interval) {
-//     if (d->restarts_left == 0) {
-//       if (process_restart(d) != 0) {
-//         printf("failed processing restart\n");
-//         return -1;
-//       }
-//     }
-//   }
+  MCU *mcus = (MCU *)malloc(total_mcus * sizeof(MCU));
+  int previous_dcs[3] = {0};
 
-//   for (block = 0; block < d->blocks_per_MCU; block++) {
-//     uint8_t c;
-//     struct HuffmanTable *dctbl = &d->huffman[0];
-//     struct HuffmanTable *actbl = &d->huffman[1];
+  for (int i = 0; i < total_mcus; i++) {
+    for (int j = 0; j < d->num_color_components; j++) {
+      if (decode_mcu(d, j, mcus[i].buffer[j], &previous_dcs[j]) != 0) {
+        printf("Error: Invalid MCU\n");
+        free(mcus);
+        return NULL;
+      }
+    }
+  }
 
-//     // decode DC coefficient (F.2.2.1)
-//     uint16_t t = huff_decode(d, dctbl);
-//     // diff = RECEIVE(t);
-//     // diff = HUFFEXTEND(diff, t);
+  // // Loops here for verification
+  // for (int k = total_mcus - 5; k < total_mcus; k++) {
+  //   for (int j = 0; j < 3; j++) {
+  //     for (int i = 0; i < 64; i++) {
+  //       if (i % 8 == 0)
+  //         printf("\n");
+  //       printf("%d ", mcus[k].buffer[j][ZIGZAG_ORDER[i]]);
+  //     }
+  //     printf("\n");
+  //   }
+  // }
 
-//     // decode AC coefficients
-
-//     // dequantize
-//   }
-
-//   d->restarts_left--;
-
-//   return 0;
-// }
-
-// int decompress_scanline(JpegDecompressor *d) {
-//   uint8_t mcu_buffer[64];
-
-//   uint32_t mcu_height = (d->image_height + 7) / 8;
-//   uint32_t mcu_width = (d->image_width + 7) / 8;
-
-//   // uint32_t row;
-//   // for (row = 0; row < d->rows_per_scan; row++)
-//   {
-//     // each entropy-coded segment except the last one shall contain
-//     // 'restart_interval' MCUs
-//     uint32_t mcu;
-//     for (mcu = 0; mcu < d->MCUs_per_row; mcu++) {
-//       printf("Decoding MCU %u\n", mcu);
-//       if (decode_mcu(d, mcu_buffer) != 0) {
-//         printf("Error decoding MCU\n");
-//         return -1;
-//       }
-
-//       for (uint8_t i = 0; i < d->comps_in_scan; i++) {
-//         uint32_t yindex, xindex;
-//         for (yindex = 0; yindex < d->comp_info[i].v_samp_factor; yindex++) {
-//           for (xindex = 0; xindex < d->comp_info[i].h_samp_factor; xindex++) {
-//             // inverse_DCT(d, mcu_buffer);
-//           }
-//         }
-//       }
-//     }
-//   }
-
-//   return 0;
-// }
+  return mcus;
+}
 
 /**
  * Read JPEG markers
@@ -697,6 +743,7 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
     d->color_components[i].exists = 0;
   }
 
+  // These fields will be filled when reading the JPEG header information
   d->restart_interval = 0;
   d->image_height = 0;
   d->image_width = 0;
@@ -705,6 +752,10 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
   d->se = 0;
   d->Ah = 0;
   d->Al = 0;
+
+  // These fields will be used when decoded Huffman coded bitstream
+  d->get_buffer = 0;
+  d->bits_left = 0;
 }
 
 void jpeg_cpu_scale(uint64_t file_length, char *buffer) {
@@ -730,10 +781,14 @@ void jpeg_cpu_scale(uint64_t file_length, char *buffer) {
     return;
   }
 
-  // Process Huffman coded bitstream
   print_jpeg_decompressor(&decompressor);
 
-  // decompress_scanline(&decompressor);
+  // Process Huffman coded bitstream
+  MCU *mcus = decompress_scanline(&decompressor);
+  if (mcus == NULL) {
+    return;
+  }
 
+  free(mcus);
   return;
 }

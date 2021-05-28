@@ -147,8 +147,12 @@ typedef struct JpegDecompressor {
 
   /* bit buffer */
   uint32_t get_buffer;
-  uint8_t bits_left;
+  uint32_t bits_left;
 } JpegDecompressor;
+
+typedef struct MCU {
+  int buffer[3][64];
+} MCU;
 
 void jpeg_cpu_scale(uint64_t file_length, char *buffer);
 
