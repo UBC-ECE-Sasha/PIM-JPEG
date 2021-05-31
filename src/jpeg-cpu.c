@@ -161,19 +161,19 @@ static void process_DQT(JpegDecompressor *d) {
       printf("Error: Invalid quantization table ID: %d, ID should be between 0 and 3\n", table_id);
       return;
     }
-    d->quant_table[table_id].exists = 1;
+    d->quant_tables[table_id].exists = 1;
 
     uint8_t precision = (qt_info >> 4) & 0x0F; // Pq
     if (precision == 0) {
       // 8 bit precision
       for (int i = 0; i < 64; i++) {
-        d->quant_table[table_id].table[ZIGZAG_ORDER[i]] = read_byte(d); // Qk
+        d->quant_tables[table_id].table[ZIGZAG_ORDER[i]] = read_byte(d); // Qk
       }
       length -= 64;
     } else {
       // 16 bit precision
       for (int i = 0; i < 64; i++) {
-        d->quant_table[table_id].table[ZIGZAG_ORDER[i]] = read_short(d); // Qk
+        d->quant_tables[table_id].table[ZIGZAG_ORDER[i]] = read_short(d); // Qk
       }
       length -= 128;
     }
@@ -225,6 +225,10 @@ static void process_SOFn(JpegDecompressor *d) {
     printf("Error: Invalid SOF - dimensions: %d x %d\n", d->image_width, d->image_height);
     return;
   }
+  d->mcu_height = (d->image_height + 7) / 8;
+  d->mcu_width = (d->image_width + 7) / 8;
+  d->padding = d->image_width % 4;
+  d->total_mcus = d->mcu_height * d->mcu_width;
 
   // Should be 3
   d->num_color_components = read_byte(d); // Nf
@@ -479,7 +483,8 @@ static uint8_t huff_decode(JpegDecompressor *d, HuffmanTable *h_table) {
 }
 
 /* F.2.1.2 Decode 8x8 block data unit */
-static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int *previous_dcs) {
+static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int *previous_dc) {
+  QuantizationTable *q_table = &d->quant_tables[d->color_components[component_index].quant_table_id];
   HuffmanTable *dc_table = &d->dc_huffman_tables[d->color_components[component_index].dc_huffman_table_id];
   HuffmanTable *ac_table = &d->ac_huffman_tables[d->color_components[component_index].ac_huffman_table_id];
 
@@ -500,8 +505,9 @@ static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int
   if (dc_length != 0 && coeff < (1 << (dc_length - 1))) {
     coeff -= (1 << dc_length) - 1;
   }
-  buffer[0] = coeff + *previous_dcs;
-  *previous_dcs = buffer[0];
+  buffer[0] = coeff + *previous_dc;
+  *previous_dc = buffer[0];
+  buffer[0] *= q_table->table[0];
 
   // Get the AC values for this MCU block
   int i = 1;
@@ -547,7 +553,8 @@ static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int
       if (coeff < (1 << (coeff_length - 1))) {
         coeff -= (1 << coeff_length) - 1;
       }
-      buffer[ZIGZAG_ORDER[i++]] = coeff;
+      buffer[ZIGZAG_ORDER[i]] = coeff * q_table->table[ZIGZAG_ORDER[i]];
+      i++;
     }
   }
 
@@ -558,14 +565,11 @@ static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int
  * Decode the Huffman coded bitstream
  */
 static MCU *decompress_scanline(JpegDecompressor *d) {
-  uint32_t mcu_height = (d->image_height + 7) / 8;
-  uint32_t mcu_width = (d->image_width + 7) / 8;
-  int total_mcus = mcu_height * mcu_width;
-
-  MCU *mcus = (MCU *)malloc(total_mcus * sizeof(MCU));
+  MCU *mcus = (MCU *)malloc(d->total_mcus * sizeof(MCU));
   int previous_dcs[3] = {0};
 
-  for (int i = 0; i < total_mcus; i++) {
+  for (int i = 0; i < d->total_mcus; i++) {
+    // TODO: Take into account Restart Intervals
     for (int j = 0; j < d->num_color_components; j++) {
       if (decode_mcu(d, j, mcus[i].buffer[j], &previous_dcs[j]) != 0) {
         printf("Error: Invalid MCU\n");
@@ -576,7 +580,7 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
   }
 
   // // Loops here for verification
-  // for (int k = total_mcus - 5; k < total_mcus; k++) {
+  // for (int k = d->total_mcus - 5; k < d->total_mcus; k++) {
   //   for (int j = 0; j < 3; j++) {
   //     for (int i = 0; i < 64; i++) {
   //       if (i % 8 == 0)
@@ -624,6 +628,7 @@ static int read_marker(JpegDecompressor *d) {
     case M_SOF5 ... M_SOF7:
     case M_SOF9 ... M_SOF11:
     case M_SOF13 ... M_SOF15:
+      // TODO: handle progressive JPEG
       printf("Got SOF marker: FF %X\n", marker);
       process_SOFn(d);
       break;
@@ -662,13 +667,13 @@ static int read_marker(JpegDecompressor *d) {
 static void print_jpeg_decompressor(JpegDecompressor *d) {
   printf("\n********** DQT **********\n");
   for (int i = 0; i < 4; i++) {
-    if (d->quant_table[i].exists) {
+    if (d->quant_tables[i].exists) {
       printf("Table ID: %d", i);
       for (int j = 0; j < 64; j++) {
         if (j % 8 == 0) {
           printf("\n");
         }
-        printf("%d ", d->quant_table[i].table[j]);
+        printf("%d ", d->quant_tables[i].table[j]);
       }
       printf("\n\n");
     }
@@ -726,6 +731,11 @@ static void print_jpeg_decompressor(JpegDecompressor *d) {
   printf("End of selection: %d\n", d->se);
   printf("Successive approximation high: %d\n", d->Ah);
   printf("Successive approximation low: %d\n\n", d->Al);
+
+  printf("\n********** BMP **********\n");
+  printf("MCU width: %d\n", d->mcu_width);
+  printf("MCU height: %d\n", d->mcu_height);
+  printf("BMP padding: %d\n", d->padding);
 }
 
 /**
@@ -735,7 +745,7 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
   d->valid = 1;
 
   for (int i = 0; i < 4; i++) {
-    d->quant_table[i].exists = 0;
+    d->quant_tables[i].exists = 0;
     d->dc_huffman_tables[i].exists = 0;
     d->ac_huffman_tables[i].exists = 0;
   }
@@ -756,6 +766,11 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
   // These fields will be used when decoded Huffman coded bitstream
   d->get_buffer = 0;
   d->bits_left = 0;
+
+  // These fields will be used when writing to BMP
+  d->mcu_width = 0;
+  d->mcu_height = 0;
+  d->padding = 0;
 }
 
 void jpeg_cpu_scale(uint64_t file_length, char *buffer) {
@@ -781,7 +796,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *buffer) {
     return;
   }
 
-  print_jpeg_decompressor(&decompressor);
+  // print_jpeg_decompressor(&decompressor);
 
   // Process Huffman coded bitstream
   MCU *mcus = decompress_scanline(&decompressor);
@@ -789,6 +804,40 @@ void jpeg_cpu_scale(uint64_t file_length, char *buffer) {
     return;
   }
 
+  // Now write the decoded data out as BMP
+  BmpObject image;
+  uint8_t *ptr;
+
+  image.win_header.width = decompressor.image_width;
+  image.win_header.height = decompressor.image_height;
+  ptr = (uint8_t *)malloc(decompressor.image_width * decompressor.image_height * 3);
+  image.data = ptr;
+
+  for (int y = decompressor.image_height - 1; y >= 0; y--) {
+    uint32_t mcu_row = y / 8;
+    uint32_t pixel_row = y % 8;
+
+    for (int x = 0; x < decompressor.image_width; x++) {
+      uint32_t mcu_column = x / 8;
+      uint32_t pixel_column = x % 8;
+      uint32_t mcu_index = mcu_row * decompressor.mcu_width + mcu_column;
+      uint32_t pixel_index = pixel_row * 8 + pixel_column;
+      ptr[0] = mcus[mcu_index].buffer[2][pixel_index];
+      ptr[1] = mcus[mcu_index].buffer[1][pixel_index];
+      ptr[2] = mcus[mcu_index].buffer[0][pixel_index];
+      ptr += 3;
+    }
+
+    for (uint32_t i = 0; i < decompressor.padding; i++) {
+      ptr[0] = 0;
+      ptr++;
+    }
+  }
+
+  write_bmp("output.bmp", &image);
+  printf("Successfully written decoded JPEG to BMP\n\n");
+
+  free(image.data);
   free(mcus);
   return;
 }

@@ -111,7 +111,7 @@ typedef struct JpegDecompressor {
   uint8_t valid; // indicates whether file is actually a JPEG file
 
   // from DQT
-  QuantizationTable quant_table[4];
+  QuantizationTable quant_tables[4];
 
   // from DRI
   uint16_t restart_interval;
@@ -131,6 +131,12 @@ typedef struct JpegDecompressor {
   uint8_t se; // End of spectral selection
   uint8_t Ah; // Successive approximation high
   uint8_t Al; // Successive approximation low
+
+  // for decoding and writing to BMP
+  uint32_t mcu_height;
+  uint32_t mcu_width;
+  uint32_t padding;
+  int total_mcus;
 
   // uint16_t restarts_left;
   // uint32_t num_restart_intervals;
