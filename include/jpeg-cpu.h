@@ -160,6 +160,6 @@ typedef struct MCU {
   int buffer[3][64];
 } MCU;
 
-void jpeg_cpu_scale(uint64_t file_length, char *buffer);
+void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer);
 
 #endif // _JPEG_CPU_H

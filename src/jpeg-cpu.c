@@ -1,4 +1,5 @@
 #include <byteswap.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,6 +7,7 @@
 #include "bmp.h"
 #include "jpeg-cpu.h"
 
+#define M_PI 3.14159265358979323846
 #define rounded_division(_a, _b) (((_a) + (_b)-1) / (_b))
 
 /* We want to emulate the behaviour of 'tjbench <jpg> -scale 1/8'
@@ -595,6 +597,89 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
 }
 
 /**
+ * Function to perform inverse DCT for one of the color components of an MCU
+ */
+static void inverse_dct_component(int *component, float *inverse_dct_map) {
+  int result[64] = {0};
+  for (int y = 0; y < 8; y++) {
+    for (int x = 0; x < 8; x++) {
+      float sum = 0.0;
+      for (int v = 0; v < 8; v++) {
+        for (int u = 0; u < 8; u++) {
+          sum += component[v * 8 + u] * inverse_dct_map[u * 8 + x] * inverse_dct_map[v * 8 + y];
+        }
+      }
+      result[y * 8 + x] = (int)sum;
+    }
+  }
+
+  for (int i = 0; i < 64; i++) {
+    component[i] = result[i];
+  }
+}
+
+/**
+ * Function to perform conversion from YCbCr to RGB for the 64 pixels within an MCU
+ */
+static void ycbcr_to_rgb_pixel(int buffer[3][64]) {
+  // https://en.wikipedia.org/wiki/YUV Y'UV444 to RGB888 conversion
+  for (int i = 0; i < 64; i++) {
+    // TODO: if multiplication is too slow, use bit shifting. However, bit shifting is less accurate from what I can see
+    // int r = buffer[0][i] + buffer[2][i] + (buffer[2][i] >> 2) + (buffer[2][i] >> 3) + (buffer[2][i] >> 5) + 128;
+    // int g = buffer[0][i] - ((buffer[1][i] >> 2) + (buffer[1][i] >> 4) + (buffer[1][i] >> 5)) -
+    //         ((buffer[2][i] >> 1) + (buffer[2][i] >> 3) + (buffer[2][i] >> 4) + (buffer[2][i] >> 5)) + 128;
+    // int b = buffer[0][i] + buffer[1][i] + (buffer[1][i] >> 1) + (buffer[1][i] >> 2) + (buffer[1][i] >> 6) + 128;
+
+    // floating point version, most accurate, but floating point calculations in DPUs are emulated, so very slow
+    // int r = buffer[0][i] + 1.402 * buffer[2][i] + 128;
+    // int g = buffer[0][i] - 0.344 * buffer[1][i] - 0.714 * buffer[2][i] + 128;
+    // int b = buffer[0][i] + 1.772 * buffer[1][i] + 128;
+
+    int r = buffer[0][i] + ((45 * buffer[2][i]) >> 5) + 128;
+    int g = buffer[0][i] - ((11 * buffer[1][i] + 23 * buffer[2][i]) >> 5) + 128;
+    int b = buffer[0][i] + ((113 * buffer[1][i]) >> 6) + 128;
+
+    if (r < 0)
+      r = 0;
+    if (r > 255)
+      r = 255;
+    if (g < 0)
+      g = 0;
+    if (g > 255)
+      g = 255;
+    if (b < 0)
+      b = 0;
+    if (b > 255)
+      b = 255;
+
+    buffer[0][i] = r;
+    buffer[1][i] = g;
+    buffer[2][i] = b;
+  }
+}
+
+/**
+ * Inverse Discrete Cosine Transform
+ */
+static void inverse_dct(JpegDecompressor *d, MCU *mcus) {
+  float inverse_dct_map[64];
+  for (int u = 0; u < 8; u++) {
+    float c = (u == 0) ? (1.0 / sqrt(2.0) / 2.0) : (1.0 / 2.0);
+    for (int x = 0; x < 8; x++) {
+      inverse_dct_map[u * 8 + x] = c * cos((2.0 * x + 1.0) * u * 3.14159265358979323846 / 16.0);
+    }
+  }
+
+  for (int i = 0; i < d->total_mcus; i++) {
+    for (int j = 0; j < d->num_color_components; j++) {
+      inverse_dct_component(mcus[i].buffer[j], inverse_dct_map);
+    }
+
+    ycbcr_to_rgb_pixel(mcus[i].buffer);
+  }
+}
+
+/**
  * Read JPEG markers
  * Return 0 when the SOS marker is found
  * Otherwise return 1 for failure
@@ -773,9 +858,11 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
   d->padding = 0;
 }
 
-void jpeg_cpu_scale(uint64_t file_length, char *buffer) {
+void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
   JpegDecompressor decompressor;
   int res = 1;
+
+  printf("Decoding file: %s\n", filename);
 
   decompressor.data = buffer;
   decompressor.ptr = decompressor.data;
@@ -804,13 +891,16 @@ void jpeg_cpu_scale(uint64_t file_length, char *buffer) {
     return;
   }
 
+  // Compute inverse DCT
+  inverse_dct(&decompressor, mcus);
+
   // Now write the decoded data out as BMP
   BmpObject image;
   uint8_t *ptr;
 
   image.win_header.width = decompressor.image_width;
   image.win_header.height = decompressor.image_height;
-  ptr = (uint8_t *)malloc(decompressor.image_width * decompressor.image_height * 3);
+  ptr = (uint8_t *)malloc(decompressor.image_height * (decompressor.image_width * 3 + decompressor.padding));
   image.data = ptr;
 
   for (int y = decompressor.image_height - 1; y >= 0; y--) {
@@ -834,8 +924,16 @@ void jpeg_cpu_scale(uint64_t file_length, char *buffer) {
     }
   }
 
-  write_bmp("output.bmp", &image);
-  printf("Successfully written decoded JPEG to BMP\n\n");
+  // Form BMP file name
+  char *period_ptr = strrchr(filename, '.');
+  if (period_ptr == NULL) {
+    strcpy(filename + strlen(filename), ".bmp");
+  } else {
+    strcpy(period_ptr, ".bmp");
+  }
+
+  write_bmp(filename, &image);
+  printf("Decoded to: %s\n\n", filename);
 
   free(image.data);
   free(mcus);
