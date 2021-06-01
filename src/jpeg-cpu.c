@@ -10,6 +10,22 @@
 #define M_PI 3.14159265358979323846
 #define rounded_division(_a, _b) (((_a) + (_b)-1) / (_b))
 
+#define M0 1.84775906502257351225
+#define M1 1.41421356237309504880
+#define M3 1.41421356237309504880
+#define M5 0.76536686473017954345
+#define M2 1.08239220029239396879
+#define M4 2.61312592975275305571
+
+#define S0 0.35355339059327376220
+#define S1 0.49039264020161522456
+#define S2 0.46193976625564337806
+#define S3 0.41573480615127261853
+#define S4 0.35355339059327376220
+#define S5 0.27778511650980111237
+#define S6 0.19134171618254488586
+#define S7 0.09754516100806413392
+
 /* We want to emulate the behaviour of 'tjbench <jpg> -scale 1/8'
         That calls 'process_data_simple_main' and 'decompress_onepass' in
 turbojpeg On my laptop, I see:
@@ -574,6 +590,7 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
   MCU *mcus = (MCU *)malloc(d->total_mcus * sizeof(MCU));
   int previous_dcs[3] = {0};
 
+  // TODO: iterate through scan lines instead of total_mcus
   for (int i = 0; i < d->total_mcus; i++) {
     // TODO: Take into account Restart Intervals
     for (int j = 0; j < d->num_color_components; j++) {
@@ -603,22 +620,141 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
 /**
  * Function to perform inverse DCT for one of the color components of an MCU
  */
-static void inverse_dct_component(int *component, float *inverse_dct_map) {
-  int result[64] = {0};
-  for (int y = 0; y < 8; y++) {
-    for (int x = 0; x < 8; x++) {
-      float sum = 0.0;
-      for (int v = 0; v < 8; v++) {
-        for (int u = 0; u < 8; u++) {
-          sum += component[v * 8 + u] * inverse_dct_map[u * 8 + x] * inverse_dct_map[v * 8 + y];
-        }
-      }
-      result[y * 8 + x] = (int)sum;
-    }
+static void inverse_dct_component(int *component, int index) {
+  for (int i = 0; i < 8; i++) {
+    float g0 = component[0 * 8 + i] * S0;
+    float g1 = component[4 * 8 + i] * S4;
+    float g2 = component[2 * 8 + i] * S2;
+    float g3 = component[6 * 8 + i] * S6;
+    float g4 = component[5 * 8 + i] * S5;
+    float g5 = component[1 * 8 + i] * S1;
+    float g6 = component[7 * 8 + i] * S7;
+    float g7 = component[3 * 8 + i] * S3;
+
+    float f0 = g0;
+    float f1 = g1;
+    float f2 = g2;
+    float f3 = g3;
+    float f4 = g4 - g7;
+    float f5 = g5 + g6;
+    float f6 = g5 - g6;
+    float f7 = g4 + g7;
+
+    float e0 = f0;
+    float e1 = f1;
+    float e2 = f2 - f3;
+    float e3 = f2 + f3;
+    float e4 = f4;
+    float e5 = f5 - f7;
+    float e6 = f6;
+    float e7 = f5 + f7;
+    float e8 = f4 + f6;
+
+    float d0 = e0;
+    float d1 = e1;
+    float d2 = e2 * M1;
+    float d3 = e3;
+    float d4 = e4 * M2;
+    float d5 = e5 * M3;
+    float d6 = e6 * M4;
+    float d7 = e7;
+    float d8 = e8 * M5;
+
+    float c0 = d0 + d1;
+    float c1 = d0 - d1;
+    float c2 = d2 - d3;
+    float c3 = d3;
+    float c4 = d4 + d8;
+    float c5 = d5 + d7;
+    float c6 = d6 - d8;
+    float c7 = d7;
+    float c8 = c5 - c6;
+
+    float b0 = c0 + c3;
+    float b1 = c1 + c2;
+    float b2 = c1 - c2;
+    float b3 = c0 - c3;
+    float b4 = c4 - c8;
+    float b5 = c8;
+    float b6 = c6 - c7;
+    float b7 = c7;
+
+    component[0 * 8 + i] = b0 + b7;
+    component[1 * 8 + i] = b1 + b6;
+    component[2 * 8 + i] = b2 + b5;
+    component[3 * 8 + i] = b3 + b4;
+    component[4 * 8 + i] = b3 - b4;
+    component[5 * 8 + i] = b2 - b5;
+    component[6 * 8 + i] = b1 - b6;
+    component[7 * 8 + i] = b0 - b7;
   }
 
-  for (int i = 0; i < 64; i++) {
-    component[i] = result[i];
+  for (int i = 0; i < 8; i++) {
+    float g0 = component[i * 8 + 0] * S0;
+    float g1 = component[i * 8 + 4] * S4;
+    float g2 = component[i * 8 + 2] * S2;
+    float g3 = component[i * 8 + 6] * S6;
+    float g4 = component[i * 8 + 5] * S5;
+    float g5 = component[i * 8 + 1] * S1;
+    float g6 = component[i * 8 + 7] * S7;
+    float g7 = component[i * 8 + 3] * S3;
+
+    float f0 = g0;
+    float f1 = g1;
+    float f2 = g2;
+    float f3 = g3;
+    float f4 = g4 - g7;
+    float f5 = g5 + g6;
+    float f6 = g5 - g6;
+    float f7 = g4 + g7;
+
+    float e0 = f0;
+    float e1 = f1;
+    float e2 = f2 - f3;
+    float e3 = f2 + f3;
+    float e4 = f4;
+    float e5 = f5 - f7;
+    float e6 = f6;
+    float e7 = f5 + f7;
+    float e8 = f4 + f6;
+
+    float d0 = e0;
+    float d1 = e1;
+    float d2 = e2 * M1;
+    float d3 = e3;
+    float d4 = e4 * M2;
+    float d5 = e5 * M3;
+    float d6 = e6 * M4;
+    float d7 = e7;
+    float d8 = e8 * M5;
+
+    float c0 = d0 + d1;
+    float c1 = d0 - d1;
+    float c2 = d2 - d3;
+    float c3 = d3;
+    float c4 = d4 + d8;
+    float c5 = d5 + d7;
+    float c6 = d6 - d8;
+    float c7 = d7;
+    float c8 = c5 - c6;
+
+    float b0 = c0 + c3;
+    float b1 = c1 + c2;
+    float b2 = c1 - c2;
+    float b3 = c0 - c3;
+    float b4 = c4 - c8;
+    float b5 = c8;
+    float b6 = c6 - c7;
+    float b7 = c7;
+
+    component[i * 8 + 0] = b0 + b7;
+    component[i * 8 + 1] = b1 + b6;
+    component[i * 8 + 2] = b2 + b5;
+    component[i * 8 + 3] = b3 + b4;
+    component[i * 8 + 4] = b3 - b4;
+    component[i * 8 + 5] = b2 - b5;
+    component[i * 8 + 6] = b1 - b6;
+    component[i * 8 + 7] = b0 - b7;
   }
 }
 
@@ -667,22 +803,26 @@ static void ycbcr_to_rgb_pixel(int buffer[3][64]) {
  * Inverse Discrete Cosine Transform
  */
 static void inverse_dct(JpegDecompressor *d, MCU *mcus) {
-  float inverse_dct_map[64];
-  for (int u = 0; u < 8; u++) {
-    float c = (u == 0) ? (1.0 / sqrt(2.0) / 2.0) : (1.0 / 2.0);
-    for (int x = 0; x < 8; x++) {
-      inverse_dct_map[u * 8 + x] = c * cos((2.0 * x + 1.0) * u * 3.14159265358979323846 / 16.0);
-    }
-  }
-
   for (int i = 0; i < d->total_mcus; i++) {
     for (int j = 0; j < d->num_color_components; j++) {
       // TODO: use integer only for idct instead of floating point
-      inverse_dct_component(mcus[i].buffer[j], inverse_dct_map);
+      inverse_dct_component(mcus[i].buffer[j], i);
     }
 
     ycbcr_to_rgb_pixel(mcus[i].buffer);
   }
+
+  // Loops here for verification
+  // for (int k = 0; k < 5; k++) {
+  //   for (int j = 0; j < 3; j++) {
+  //     for (int i = 0; i < 64; i++) {
+  //       if (i % 8 == 0)
+  //         printf("\n");
+  //       printf("%d ", mcus[k].buffer[j][ZIGZAG_ORDER[i]]);
+  //     }
+  //     printf("\n");
+  //   }
+  // }
 }
 
 /**
@@ -897,7 +1037,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
     return;
   }
 
-  // Compute inverse DCT
+  // Compute inverse DCT and convert YCbCr to RGB
   inverse_dct(&decompressor, mcus);
 
   // Now write the decoded data out as BMP
