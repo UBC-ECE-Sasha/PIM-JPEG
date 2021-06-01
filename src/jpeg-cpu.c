@@ -23,9 +23,6 @@ Decompress    --> Frame rate:         92.177865 fps
                   Throughput:         191.140021 Megapixels/sec
 */
 
-/* Error exit handler */
-#define ERREXIT(msg) return -1;
-
 /**
  * Helper array for filling in quantization table in zigzag order
  */
@@ -83,8 +80,11 @@ static void skip_bytes(JpegDecompressor *d, int count) {
 static int skip_marker(JpegDecompressor *d) {
   uint16_t length = read_short(d);
   // Length includes itself, so must be at least 2
-  if (length < 2)
-    ERREXIT("Erroneous JPEG marker length");
+  if (length < 2) {
+    d->valid = 0;
+    fprintf(stderr, "ERROR: Invalid length encountered in skip_marker\n");
+    return -1;
+  }
 
   length -= 2;
   // Skip over the remaining bytes
@@ -139,7 +139,7 @@ static void process_header(JpegDecompressor *d) {
   }
   if (c1 != 0xFF || c2 != M_SOI) {
     d->valid = 0;
-    printf("Error: Not JPEG: %X %X\n", c1, c2);
+    fprintf(stderr, "Error: Not JPEG: %X %X\n", c1, c2);
   } else {
     printf("Got SOI marker: %X %X\n", c1, c2);
   }
@@ -160,7 +160,7 @@ static void process_DQT(JpegDecompressor *d) {
     uint8_t table_id = qt_info & 0x0F; // Tq
     if (table_id > 3) {
       d->valid = 0;
-      printf("Error: Invalid quantization table ID: %d, ID should be between 0 and 3\n", table_id);
+      fprintf(stderr, "Error: Invalid DQT - got quantization table ID: %d, ID should be between 0 and 3\n", table_id);
       return;
     }
     d->quant_tables[table_id].exists = 1;
@@ -183,7 +183,7 @@ static void process_DQT(JpegDecompressor *d) {
 
   if (length != 0) {
     d->valid = 0;
-    printf("Error: Invalid DQT - Actual quantization table length does not match length field\n");
+    fprintf(stderr, "Error: Invalid DQT - length incorrect\n");
   }
 }
 
@@ -194,7 +194,8 @@ static void process_DRI(JpegDecompressor *d) {
   int length = read_short(d);
   if (length != 4) {
     d->valid = 0;
-    printf("Error: Invalid DRI - length is not 4\n");
+    fprintf(stderr, "Error: Invalid DRI - length is not 4\n");
+    return;
   }
 
   d->restart_interval = read_short(d);
@@ -207,7 +208,7 @@ static void process_DRI(JpegDecompressor *d) {
 static void process_SOFn(JpegDecompressor *d) {
   if (d->num_color_components != 0) {
     d->valid = 0;
-    printf("Error: Multiple SOFs encountered\n");
+    fprintf(stderr, "Error: Invalid SOF - multiple SOFs encountered\n");
     return;
   }
 
@@ -216,7 +217,7 @@ static void process_SOFn(JpegDecompressor *d) {
   uint8_t precision = read_byte(d); // P
   if (precision != 8) {
     d->valid = 0;
-    printf("Error: Invalid SOF - precision is %d, should be 8\n", precision);
+    fprintf(stderr, "Error: Invalid SOF - precision is %d, should be 8\n", precision);
     return;
   }
 
@@ -224,7 +225,7 @@ static void process_SOFn(JpegDecompressor *d) {
   d->image_width = read_short(d);  // X
   if (d->image_height == 0 || d->image_width == 0) {
     d->valid = 0;
-    printf("Error: Invalid SOF - dimensions: %d x %d\n", d->image_width, d->image_height);
+    fprintf(stderr, "Error: Invalid SOF - dimensions: %d x %d\n", d->image_width, d->image_height);
     return;
   }
   d->mcu_height = (d->image_height + 7) / 8;
@@ -236,7 +237,7 @@ static void process_SOFn(JpegDecompressor *d) {
   d->num_color_components = read_byte(d); // Nf
   if (d->num_color_components == 0 || d->num_color_components > 3) {
     d->valid = 0;
-    printf("Error: Invalid SOF - number of color components: %d\n", d->num_color_components);
+    fprintf(stderr, "Error: Invalid SOF - number of color components: %d\n", d->num_color_components);
     return;
   }
 
@@ -245,7 +246,7 @@ static void process_SOFn(JpegDecompressor *d) {
     uint8_t component_id = read_byte(d); // Ci
     if (component_id == 0 || component_id > 3) {
       d->valid = 0;
-      printf("Error: Invalid SOF - component ID: %d\n", component_id);
+      fprintf(stderr, "Error: Invalid SOF - component ID: %d\n", component_id);
       return;
     }
 
@@ -257,8 +258,9 @@ static void process_SOFn(JpegDecompressor *d) {
     component->h_samp_factor = (factor >> 4) & 0x0F; // Hi
     component->v_samp_factor = factor & 0x0F;        // Vi
     if (component->h_samp_factor != 1 || component->v_samp_factor != 1) {
+      // TODO: add support for other sampling factors
       d->valid = 0;
-      printf("Error: Invalid SOF - horizontal and vertical samplying factor other than 1 not support yet\n");
+      fprintf(stderr, "Error: Invalid SOF - horizontal and vertical sampling factor other than 1 not support yet\n");
       return;
     }
     component->quant_table_id = read_byte(d); // Tqi
@@ -266,7 +268,7 @@ static void process_SOFn(JpegDecompressor *d) {
 
   if (length - 8 - (3 * d->num_color_components) != 0) {
     d->valid = 0;
-    printf("Error: Invalid SOF - length incorrect\n");
+    fprintf(stderr, "Error: Invalid SOF - length incorrect\n");
   }
 }
 
@@ -287,7 +289,7 @@ static void process_DHT(JpegDecompressor *d) {
     uint8_t ac_table = (ht_info >> 4) & 0x0F; // Tc
     if (table_id > 3) {
       d->valid = 0;
-      printf("Error: Invalid DHT - Huffman Table ID: %d\n", table_id);
+      fprintf(stderr, "Error: Invalid DHT - Huffman Table ID: %d\n", table_id);
       return;
     }
 
@@ -310,7 +312,7 @@ static void process_DHT(JpegDecompressor *d) {
 
   if (length != 0) {
     d->valid = 0;
-    printf("Error: Invalid DHT - length incorrect\n");
+    fprintf(stderr, "Error: Invalid DHT - length incorrect\n");
   }
 }
 
@@ -354,8 +356,8 @@ static void process_SOS(JpegDecompressor *d) {
   length -= 1;
   if (num_components == 0 || num_components != d->num_color_components) {
     d->valid = 0;
-    printf("Error: Invalid SOS - number of color components does not match SOF: %d vs %d", num_components,
-           d->num_color_components);
+    fprintf(stderr, "Error: Invalid SOS - number of color components does not match SOF: %d vs %d", num_components,
+            d->num_color_components);
     return;
   }
 
@@ -363,7 +365,7 @@ static void process_SOS(JpegDecompressor *d) {
     uint8_t component_id = read_byte(d); // Csj
     if (component_id == 0 || component_id > 3) {
       d->valid = 0;
-      printf("Error: Invalid SOS - component ID: %d\n", component_id);
+      fprintf(stderr, "Error: Invalid SOS - component ID: %d\n", component_id);
       return;
     }
 
@@ -382,18 +384,18 @@ static void process_SOS(JpegDecompressor *d) {
 
   if (d->ss != 0 || d->se != 63) {
     d->valid = 0;
-    printf("Error: Invalid SOS - invalid spectral selection\n");
+    fprintf(stderr, "Error: Invalid SOS - invalid spectral selection\n");
     return;
   }
   if (d->Ah != 0 || d->Al != 0) {
     d->valid = 0;
-    printf("Error: Invalid SOS - invalid successive approximation\n");
+    fprintf(stderr, "Error: Invalid SOS - invalid successive approximation\n");
     return;
   }
 
   if (length - (2 * num_components) != 0) {
     d->valid = 0;
-    printf("Error: Invalid SOS - length incorrect\n");
+    fprintf(stderr, "Error: Invalid SOS - length incorrect\n");
   }
 
   build_huffman_tables(d);
@@ -453,7 +455,7 @@ static int get_bits(JpegDecompressor *d, uint32_t num_bits) {
         c = b;
     }
 
-    // add the new bits to the buffer (MSB aligned)
+    // Add the new bits to the buffer (MSB aligned)
     d->get_buffer |= c << (32 - 8 - d->bits_left);
     d->bits_left += 8;
   }
@@ -490,25 +492,25 @@ static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int
   HuffmanTable *dc_table = &d->dc_huffman_tables[d->color_components[component_index].dc_huffman_table_id];
   HuffmanTable *ac_table = &d->ac_huffman_tables[d->color_components[component_index].ac_huffman_table_id];
 
-  // Get DC value for this 8x8 MCU block
+  // Get DC value for this MCU block
   uint8_t dc_length = huff_decode(d, dc_table);
-  // TODO: write better error handling system
-  // TODO: acknowledge Everything You Need to Know About JPEG
   if (dc_length == (uint8_t)-1) {
-    printf("Error: Invalid DC code\n");
+    fprintf(stderr, "Error: Invalid DC code\n");
     return -1;
   }
   if (dc_length > 11) {
-    printf("Error: DC coefficient length greater than 11\n");
+    fprintf(stderr, "Error: DC coefficient length greater than 11\n");
     return -1;
   }
 
   int coeff = get_bits(d, dc_length);
   if (dc_length != 0 && coeff < (1 << (dc_length - 1))) {
+    // Convert to negative coefficient
     coeff -= (1 << dc_length) - 1;
   }
   buffer[0] = coeff + *previous_dc;
   *previous_dc = buffer[0];
+  // Dequantization
   buffer[0] *= q_table->table[0];
 
   // Get the AC values for this MCU block
@@ -516,7 +518,7 @@ static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int
   while (i < 64) {
     uint8_t ac_length = huff_decode(d, ac_table);
     if (ac_length == (uint8_t)-1) {
-      printf("Error: Invalid AC code\n");
+      fprintf(stderr, "Error: Invalid AC code\n");
       return -1;
     }
 
@@ -539,7 +541,7 @@ static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int
     }
 
     if (i + num_zeroes >= 64) {
-      printf("Error: Invalid AC code - zeros exceeded MCU length");
+      fprintf(stderr, "Error: Invalid AC code - zeros exceeded MCU length");
       return -1;
     }
     for (int j = 0; j < num_zeroes; j++) {
@@ -547,14 +549,16 @@ static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int
     }
 
     if (coeff_length > 10) {
-      printf("Error: AC coefficient length greater than 10\n");
+      fprintf(stderr, "Error: AC coefficient length greater than 10\n");
       return -1;
     }
     if (coeff_length != 0) {
       coeff = get_bits(d, coeff_length);
       if (coeff < (1 << (coeff_length - 1))) {
+        // Convert to negative coefficient
         coeff -= (1 << coeff_length) - 1;
       }
+      // Write coefficient to buffer as well as perform dequantization
       buffer[ZIGZAG_ORDER[i]] = coeff * q_table->table[ZIGZAG_ORDER[i]];
       i++;
     }
@@ -574,7 +578,7 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
     // TODO: Take into account Restart Intervals
     for (int j = 0; j < d->num_color_components; j++) {
       if (decode_mcu(d, j, mcus[i].buffer[j], &previous_dcs[j]) != 0) {
-        printf("Error: Invalid MCU\n");
+        fprintf(stderr, "Error: Invalid MCU\n");
         free(mcus);
         return NULL;
       }
@@ -630,11 +634,12 @@ static void ycbcr_to_rgb_pixel(int buffer[3][64]) {
     //         ((buffer[2][i] >> 1) + (buffer[2][i] >> 3) + (buffer[2][i] >> 4) + (buffer[2][i] >> 5)) + 128;
     // int b = buffer[0][i] + buffer[1][i] + (buffer[1][i] >> 1) + (buffer[1][i] >> 2) + (buffer[1][i] >> 6) + 128;
 
-    // floating point version, most accurate, but floating point calculations in DPUs are emulated, so very slow
+    // Floating point version, most accurate, but floating point calculations in DPUs are emulated, so very slow
     // int r = buffer[0][i] + 1.402 * buffer[2][i] + 128;
     // int g = buffer[0][i] - 0.344 * buffer[1][i] - 0.714 * buffer[2][i] + 128;
     // int b = buffer[0][i] + 1.772 * buffer[1][i] + 128;
 
+    // Integer only, quite accurate but may be less performant than only using bit shifting
     int r = buffer[0][i] + ((45 * buffer[2][i]) >> 5) + 128;
     int g = buffer[0][i] - ((11 * buffer[1][i] + 23 * buffer[2][i]) >> 5) + 128;
     int b = buffer[0][i] + ((113 * buffer[1][i]) >> 6) + 128;
@@ -672,6 +677,7 @@ static void inverse_dct(JpegDecompressor *d, MCU *mcus) {
 
   for (int i = 0; i < d->total_mcus; i++) {
     for (int j = 0; j < d->num_color_components; j++) {
+      // TODO: use integer only for idct instead of floating point
       inverse_dct_component(mcus[i].buffer[j], inverse_dct_map);
     }
 
@@ -691,7 +697,7 @@ static int read_marker(JpegDecompressor *d) {
   switch (marker) {
     case -1:
       d->valid = 0;
-      printf("Error: Read past EOF\n");
+      fprintf(stderr, "Error: Read past EOF\n");
       break;
 
     case M_APP_FIRST ... M_APP_LAST:
@@ -739,7 +745,7 @@ static int read_marker(JpegDecompressor *d) {
 
     default:
       d->valid = 0;
-      printf("Error: Unhandled marker: FF %X\n", marker);
+      fprintf(stderr, "Error: Unhandled marker: FF %X\n", marker);
       break;
   }
 
@@ -879,7 +885,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
   }
 
   if (!decompressor.valid) {
-    printf("Error: Invalid JPEG\n");
+    fprintf(stderr, "Error: Invalid JPEG\n");
     return;
   }
 
