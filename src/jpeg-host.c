@@ -30,6 +30,8 @@
 #define DPU_ID_SLICE(_x) ((_x >> 8) & 0xFF)
 #define DPU_ID_DPU(_x) ((_x)&0xFF)
 
+#define TIME_NOW(_t) (clock_gettime(CLOCK_MONOTONIC, (_t)))
+
 const char options[] = "cdm:r:s:M";
 static uint32_t rank_count, dpu_count;
 static uint32_t dpus_per_rank;
@@ -577,7 +579,14 @@ static int cpu_main(struct jpeg_options *opts, host_results *results) {
     total_data_processed += file_length;
 #endif // STATISTICS
 
+    struct timespec start, end;
+
+    TIME_NOW(&start);
     jpeg_cpu_scale(file_length, filename, buffer);
+    TIME_NOW(&end);
+    float run_time = TIME_DIFFERENCE(start, end);
+
+    printf("Total runtime: %fs\n", run_time);
   }
 
   return 0;
