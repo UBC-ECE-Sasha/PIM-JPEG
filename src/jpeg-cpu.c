@@ -18,21 +18,21 @@
 
 // #define M_PI 3.14159265358979323846
 
-#define M0 1.84775906502257351225 // 118 >> 6
-#define M1 1.41421356237309504880 // 90 >> 6
-#define M3 1.41421356237309504880 // 90 >> 6
+#define M0 1.84775906502257351225 // 118 >> 6 or 473 >> 8
+#define M1 1.41421356237309504880 // 90 >> 6  or 181 >> 7
+#define M2 1.08239220029239396879 // 69 >> 6  or 277 >> 8
+#define M3 1.41421356237309504880 // 90 >> 6  or 181 >> 7
+#define M4 2.61312592975275305571 // 167 >> 6 or 669 >> 8
 #define M5 0.76536686473017954345 // 49 >> 6
-#define M2 1.08239220029239396879 // 69 >> 6
-#define M4 2.61312592975275305571 // 167 >> 6
 
-#define S0 0.35355339059327376220 // 22 >> 6
-#define S1 0.49039264020161522456 // 31 >> 6
-#define S2 0.46193976625564337806 // 30 >> 6
-#define S3 0.41573480615127261853 // 27 >> 6
-#define S4 0.35355339059327376220 // 22 >> 6
-#define S5 0.27778511650980111237 // 18 >> 6
-#define S6 0.19134171618254488586 // 12 >> 6
-#define S7 0.09754516100806413392 // 6 >> 6
+#define S0 0.35355339059327376220 // 22 >> 6 or 181 >> 9
+#define S1 0.49039264020161522456 // 31 >> 6 or 251 >> 9
+#define S2 0.46193976625564337806 // 30 >> 6 or 59 >> 7
+#define S3 0.41573480615127261853 // 27 >> 6 or 213 >> 9
+#define S4 0.35355339059327376220 // 22 >> 6 or 181 >> 9
+#define S5 0.27778511650980111237 // 18 >> 6 or 71 >> 8
+#define S6 0.19134171618254488586 // 12 >> 6 or 49 >> 8
+#define S7 0.09754516100806413392 // 6 >> 6  or 25 >> 8
 
 /* We want to emulate the behaviour of 'tjbench <jpg> -scale 1/8'
         That calls 'process_data_simple_main' and 'decompress_onepass' in
@@ -617,16 +617,28 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
  * Function to perform inverse DCT for one of the color components of an MCU
  */
 static void inverse_dct_component(int *component) {
-  // ANN algorithm
+  // ANN algorithm, intermediate values are bit shifted to the left to preserve precision
+  // and then bit shifted to the right at the end
   for (int i = 0; i < 8; i++) {
-    int g0 = (component[0 * 8 + i] * 22) >> 6;
-    int g1 = (component[4 * 8 + i] * 22) >> 6;
-    int g2 = (component[2 * 8 + i] * 30) >> 6;
-    int g3 = (component[6 * 8 + i] * 12) >> 6;
-    int g4 = (component[5 * 8 + i] * 18) >> 6;
-    int g5 = (component[1 * 8 + i] * 31) >> 6;
-    int g6 = (component[7 * 8 + i] * 6) >> 6;
-    int g7 = (component[3 * 8 + i] * 27) >> 6;
+    // Higher accuracy
+    int g0 = (component[0 * 8 + i] * 181) >> 5;
+    int g1 = (component[4 * 8 + i] * 181) >> 5;
+    int g2 = (component[2 * 8 + i] * 59) >> 3;
+    int g3 = (component[6 * 8 + i] * 49) >> 4;
+    int g4 = (component[5 * 8 + i] * 71) >> 4;
+    int g5 = (component[1 * 8 + i] * 251) >> 5;
+    int g6 = (component[7 * 8 + i] * 25) >> 4;
+    int g7 = (component[3 * 8 + i] * 213) >> 5;
+
+    // Lower accuracy
+    // int g0 = (component[0 * 8 + i] * 22) >> 2;
+    // int g1 = (component[4 * 8 + i] * 22) >> 2;
+    // int g2 = (component[2 * 8 + i] * 30) >> 2;
+    // int g3 = (component[6 * 8 + i] * 12) >> 2;
+    // int g4 = (component[5 * 8 + i] * 18) >> 2;
+    // int g5 = (component[1 * 8 + i] * 31) >> 2;
+    // int g6 = (component[7 * 8 + i] * 6) >> 2;
+    // int g7 = (component[3 * 8 + i] * 27) >> 2;
 
     int f4 = g4 - g7;
     int f5 = g5 + g6;
@@ -639,11 +651,19 @@ static void inverse_dct_component(int *component) {
     int e7 = f5 + f7;
     int e8 = f4 + f6;
 
-    int d2 = (e2 * 90) >> 6;
-    int d4 = (f4 * 69) >> 6;
-    int d5 = (e5 * 90) >> 6;
-    int d6 = (f6 * 167) >> 6;
+    // Higher accuracy
+    int d2 = (e2 * 181) >> 7;
+    int d4 = (f4 * 277) >> 8;
+    int d5 = (e5 * 181) >> 7;
+    int d6 = (f6 * 669) >> 8;
     int d8 = (e8 * 49) >> 6;
+
+    // Lower accuracy
+    // int d2 = (e2 * 90) >> 6;
+    // int d4 = (f4 * 69) >> 6;
+    // int d5 = (e5 * 90) >> 6;
+    // int d6 = (f6 * 167) >> 6;
+    // int d8 = (e8 * 49) >> 6;
 
     int c0 = g0 + g1;
     int c1 = g0 - g1;
@@ -660,25 +680,36 @@ static void inverse_dct_component(int *component) {
     int b4 = c4 - c8;
     int b6 = c6 - e7;
 
-    component[0 * 8 + i] = b0 + e7;
-    component[1 * 8 + i] = b1 + b6;
-    component[2 * 8 + i] = b2 + c8;
-    component[3 * 8 + i] = b3 + b4;
-    component[4 * 8 + i] = b3 - b4;
-    component[5 * 8 + i] = b2 - c8;
-    component[6 * 8 + i] = b1 - b6;
-    component[7 * 8 + i] = b0 - e7;
+    component[0 * 8 + i] = (b0 + e7) >> 4;
+    component[1 * 8 + i] = (b1 + b6) >> 4;
+    component[2 * 8 + i] = (b2 + c8) >> 4;
+    component[3 * 8 + i] = (b3 + b4) >> 4;
+    component[4 * 8 + i] = (b3 - b4) >> 4;
+    component[5 * 8 + i] = (b2 - c8) >> 4;
+    component[6 * 8 + i] = (b1 - b6) >> 4;
+    component[7 * 8 + i] = (b0 - e7) >> 4;
   }
 
   for (int i = 0; i < 8; i++) {
-    int g0 = (component[i * 8 + 0] * 22) >> 6;
-    int g1 = (component[i * 8 + 4] * 22) >> 6;
-    int g2 = (component[i * 8 + 2] * 30) >> 6;
-    int g3 = (component[i * 8 + 6] * 12) >> 6;
-    int g4 = (component[i * 8 + 5] * 18) >> 6;
-    int g5 = (component[i * 8 + 1] * 31) >> 6;
-    int g6 = (component[i * 8 + 7] * 6) >> 6;
-    int g7 = (component[i * 8 + 3] * 27) >> 6;
+    // Higher accuracy
+    int g0 = (component[i * 8 + 0] * 181) >> 5;
+    int g1 = (component[i * 8 + 4] * 181) >> 5;
+    int g2 = (component[i * 8 + 2] * 59) >> 3;
+    int g3 = (component[i * 8 + 6] * 49) >> 4;
+    int g4 = (component[i * 8 + 5] * 71) >> 4;
+    int g5 = (component[i * 8 + 1] * 251) >> 5;
+    int g6 = (component[i * 8 + 7] * 25) >> 4;
+    int g7 = (component[i * 8 + 3] * 213) >> 5;
+
+    // Lower accuracy
+    // int g0 = (component[i * 8 + 0] * 22) >> 2;
+    // int g1 = (component[i * 8 + 4] * 22) >> 2;
+    // int g2 = (component[i * 8 + 2] * 30) >> 2;
+    // int g3 = (component[i * 8 + 6] * 12) >> 2;
+    // int g4 = (component[i * 8 + 5] * 18) >> 2;
+    // int g5 = (component[i * 8 + 1] * 31) >> 2;
+    // int g6 = (component[i * 8 + 7] * 6) >> 2;
+    // int g7 = (component[i * 8 + 3] * 27) >> 2;
 
     int f4 = g4 - g7;
     int f5 = g5 + g6;
@@ -691,11 +722,19 @@ static void inverse_dct_component(int *component) {
     int e7 = f5 + f7;
     int e8 = f4 + f6;
 
-    int d2 = (e2 * 90) >> 6;
-    int d4 = (f4 * 69) >> 6;
-    int d5 = (e5 * 90) >> 6;
-    int d6 = (f6 * 167) >> 6;
+    // Higher accuracy
+    int d2 = (e2 * 181) >> 7;
+    int d4 = (f4 * 277) >> 8;
+    int d5 = (e5 * 181) >> 7;
+    int d6 = (f6 * 669) >> 8;
     int d8 = (e8 * 49) >> 6;
+
+    // Lower accuracy
+    // int d2 = (e2 * 90) >> 6;
+    // int d4 = (f4 * 69) >> 6;
+    // int d5 = (e5 * 90) >> 6;
+    // int d6 = (f6 * 167) >> 6;
+    // int d8 = (e8 * 49) >> 6;
 
     int c0 = g0 + g1;
     int c1 = g0 - g1;
@@ -712,14 +751,14 @@ static void inverse_dct_component(int *component) {
     int b4 = c4 - c8;
     int b6 = c6 - e7;
 
-    component[i * 8 + 0] = b0 + e7;
-    component[i * 8 + 1] = b1 + b6;
-    component[i * 8 + 2] = b2 + c8;
-    component[i * 8 + 3] = b3 + b4;
-    component[i * 8 + 4] = b3 - b4;
-    component[i * 8 + 5] = b2 - c8;
-    component[i * 8 + 6] = b1 - b6;
-    component[i * 8 + 7] = b0 - e7;
+    component[i * 8 + 0] = (b0 + e7) >> 4;
+    component[i * 8 + 1] = (b1 + b6) >> 4;
+    component[i * 8 + 2] = (b2 + c8) >> 4;
+    component[i * 8 + 3] = (b3 + b4) >> 4;
+    component[i * 8 + 4] = (b3 - b4) >> 4;
+    component[i * 8 + 5] = (b2 - c8) >> 4;
+    component[i * 8 + 6] = (b1 - b6) >> 4;
+    component[i * 8 + 7] = (b0 - e7) >> 4;
   }
 }
 
@@ -877,7 +916,7 @@ static void ycbcr_to_rgb_pixel(int buffer[3][64]) {
 static void inverse_dct(JpegDecompressor *d, MCU *mcus) {
   for (int i = 0; i < d->total_mcus; i++) {
     for (int j = 0; j < d->num_color_components; j++) {
-      inverse_dct_component_float(mcus[i].buffer[j]);
+      inverse_dct_component(mcus[i].buffer[j]);
     }
 
     ycbcr_to_rgb_pixel(mcus[i].buffer);
