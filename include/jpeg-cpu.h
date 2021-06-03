@@ -92,8 +92,8 @@ typedef struct ColorComponentInfo {
 
   // from SOF
   uint8_t component_id;
-  uint8_t h_samp_factor; // also MCU_width
-  uint8_t v_samp_factor; // also MCU_height
+  uint8_t h_samp_factor;
+  uint8_t v_samp_factor;
   uint8_t quant_table_id;
 
   // from SOS

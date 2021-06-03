@@ -550,17 +550,18 @@ done:
 }
 
 static int cpu_main(struct jpeg_options *opts, host_results *results) {
+  struct timespec start, end;
   char *buffer = malloc(MAX_INPUT_LENGTH);
   uint32_t file_index = 0;
-  uint32_t remaining_file_count = opts->input_file_count;
 
   dbg_printf("Input file count=%u\n", opts->input_file_count);
 
   // as long as there are still files to process
-  while (remaining_file_count--) {
+  for (; file_index < opts->input_file_count; file_index++) {
     struct stat st;
     char *filename = input_files[file_index];
 
+    TIME_NOW(&start);
     // read the length of the next input file
     stat(filename, &st);
     uint64_t file_length = st.st_size;
@@ -579,16 +580,14 @@ static int cpu_main(struct jpeg_options *opts, host_results *results) {
     total_data_processed += file_length;
 #endif // STATISTICS
 
-    struct timespec start, end;
-
-    TIME_NOW(&start);
     jpeg_cpu_scale(file_length, filename, buffer);
     TIME_NOW(&end);
     float run_time = TIME_DIFFERENCE(start, end);
 
-    printf("Total runtime: %fs\n", run_time);
+    printf("Total runtime: %fs\n\n", run_time);
   }
 
+  free(buffer);
   return 0;
 }
 
@@ -728,8 +727,13 @@ int main(int argc, char **argv) {
 
   if (use_dpu)
     status = dpu_main(&opts, &results);
-  else
+  else {
+    for (uint32_t i = 0; i < opts.input_file_count; i++) {
+      printf("File %d: %s\n", i, input_files[i]);
+    }
+
     status = cpu_main(&opts, &results);
+  }
 
   if (status != PROG_OK) {
     fprintf(stderr, "encountered error %u\n", status);

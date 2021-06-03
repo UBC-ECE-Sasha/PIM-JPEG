@@ -281,13 +281,7 @@ static void process_SOFn(JpegDecompressor *d) {
     uint8_t factor = read_byte(d);
     component->h_samp_factor = (factor >> 4) & 0x0F; // Hi
     component->v_samp_factor = factor & 0x0F;        // Vi
-    if (component->h_samp_factor != 1 || component->v_samp_factor != 1) {
-      // TODO: add support for other sampling factors
-      d->valid = 0;
-      fprintf(stderr, "Error: Invalid SOF - horizontal and vertical sampling factor other than 1 not support yet\n");
-      return;
-    }
-    component->quant_table_id = read_byte(d); // Tqi
+    component->quant_table_id = read_byte(d);        // Tqi
   }
 
   if (length - 8 - (3 * d->num_color_components) != 0) {
@@ -380,7 +374,7 @@ static void process_SOS(JpegDecompressor *d) {
   length -= 1;
   if (num_components == 0 || num_components != d->num_color_components) {
     d->valid = 0;
-    fprintf(stderr, "Error: Invalid SOS - number of color components does not match SOF: %d vs %d", num_components,
+    fprintf(stderr, "Error: Invalid SOS - number of color components does not match SOF: %d vs %d\n", num_components,
             d->num_color_components);
     return;
   }
@@ -953,13 +947,18 @@ static int read_marker(JpegDecompressor *d) {
       process_DRI(d);
       break;
 
-    case M_SOF0 ... M_SOF3:
-    case M_SOF5 ... M_SOF7:
-    case M_SOF9 ... M_SOF11:
-    case M_SOF13 ... M_SOF15:
-      // TODO: handle progressive JPEG
+    case M_SOF0:
+      // case M_SOF5 ... M_SOF7:
+      // case M_SOF9 ... M_SOF11:
+      // case M_SOF13 ... M_SOF15:
       printf("Got SOF marker: FF %X\n", marker);
       process_SOFn(d);
+      break;
+
+    case M_SOF2:
+      // TODO: handle progressive JPEG
+      d->valid = 0;
+      fprintf(stderr, "Got progressive JPEG, not supported yet\n", marker);
       break;
 
     case M_DHT:
@@ -1207,15 +1206,17 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
 #endif
 
   // Form BMP file name
-  char *period_ptr = strrchr(filename, '.');
+  char *filename_copy = (char *)malloc(sizeof(char) * (strlen(filename) + 1));
+  strcpy(filename_copy, filename);
+  char *period_ptr = strrchr(filename_copy, '.');
   if (period_ptr == NULL) {
-    strcpy(filename + strlen(filename), ".bmp");
+    strcpy(filename_copy + strlen(filename_copy), ".bmp");
   } else {
     strcpy(period_ptr, ".bmp");
   }
 
-  write_bmp(filename, &image);
-  printf("Decoded to: %s\n\n", filename);
+  write_bmp(filename_copy, &image);
+  printf("Decoded to: %s\n", filename_copy);
 
   free(image.data);
   free(mcus);
