@@ -57,11 +57,15 @@ const uint8_t ZIGZAG_ORDER[] = {0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 
 /**
  * Check whether EOF is reached by comparing current ptr location to start
  * location + entire length of file
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static int eof(JpegDecompressor *d) { return (d->ptr >= d->data + d->length); }
 
 /**
  * Helper function to read a byte from the file
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static uint8_t read_byte(JpegDecompressor *d) {
   uint8_t temp;
@@ -73,6 +77,8 @@ static uint8_t read_byte(JpegDecompressor *d) {
 
 /**
  * Helper function to read 2 bytes from the file, MSB order
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static uint16_t read_short(JpegDecompressor *d) {
   uint16_t temp3;
@@ -89,6 +95,9 @@ static uint16_t read_short(JpegDecompressor *d) {
 
 /**
  * Skip count bytes
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
+ * @param count The number of bytes to skip
  */
 static void skip_bytes(JpegDecompressor *d, int count) {
   // If after skipping count bytes we go beyond EOF, then only skip till EOF
@@ -100,6 +109,8 @@ static void skip_bytes(JpegDecompressor *d, int count) {
 
 /**
  * Skip over an unknown or uninteresting variable-length marker like APPN or COM
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static int skip_marker(JpegDecompressor *d) {
   uint16_t length = read_short(d);
@@ -119,6 +130,8 @@ static int skip_marker(JpegDecompressor *d) {
 
 /**
  * Find the next marker (byte with value FF). Swallow consecutive duplicate FF bytes
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static int next_marker(JpegDecompressor *d) {
   uint8_t byte;
@@ -153,6 +166,8 @@ static int next_marker(JpegDecompressor *d) {
 
 /**
  * Read whether we are at valid START OF IMAGE
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static void process_header(JpegDecompressor *d) {
   uint8_t c1 = 0, c2 = 0;
@@ -172,6 +187,8 @@ static void process_header(JpegDecompressor *d) {
 /**
  * Read Quantization Table
  * Page 40: Table B.4
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static void process_DQT(JpegDecompressor *d) {
   int length = read_short(d); // Lq
@@ -213,6 +230,8 @@ static void process_DQT(JpegDecompressor *d) {
 
 /**
  * Read Restart Interval
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static void process_DRI(JpegDecompressor *d) {
   int length = read_short(d);
@@ -228,6 +247,8 @@ static void process_DRI(JpegDecompressor *d) {
 /**
  * Read Start Of Frame
  * Page 36: Table B.2
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static void process_SOFn(JpegDecompressor *d) {
   if (d->num_color_components != 0) {
@@ -293,6 +314,8 @@ static void process_SOFn(JpegDecompressor *d) {
 /**
  * Read Huffman tables
  * Page 41: Table B.5
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static void process_DHT(JpegDecompressor *d) {
   int length = read_short(d); // Lf
@@ -336,6 +359,8 @@ static void process_DHT(JpegDecompressor *d) {
 
 /**
  * Helper function for actually generating the Huffman codes
+ *
+ * @param h_table HuffmanTable struct that holds all the Huffman values and offsets
  */
 static void generate_codes(HuffmanTable *h_table) {
   uint32_t code = 0;
@@ -350,6 +375,8 @@ static void generate_codes(HuffmanTable *h_table) {
 
 /**
  * Generate the Huffman codes for Huffman tables
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static void build_huffman_tables(JpegDecompressor *d) {
   for (int i = 0; i < 4; i++) {
@@ -365,6 +392,8 @@ static void build_huffman_tables(JpegDecompressor *d) {
 /**
  * Read Start Of Scan
  * Page 38: Table B.3
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static void process_SOS(JpegDecompressor *d) {
   int length = read_short(d); // Ls
@@ -450,7 +479,10 @@ static void process_SOS(JpegDecompressor *d) {
 // }
 
 /**
- * Get the number of specified bits from the buffer
+ * Get the number of specified bits from Huffman coded bitstream
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
+ * @param num_bits The number of bits to read from the bitstream
  */
 static int get_bits(JpegDecompressor *d, uint32_t num_bits) {
   uint8_t b;
@@ -487,6 +519,9 @@ static int get_bits(JpegDecompressor *d, uint32_t num_bits) {
 /**
  * Read Huffman coded bitstream bit by bit to form a Huffman code, then return the value which matches
  * this code. Value is read from the Huffman table formed when reading in the JPEG header
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
+ * @param h_table HuffmanTable struct that holds all the Huffman codes and values
  */
 static uint8_t huff_decode(JpegDecompressor *d, HuffmanTable *h_table) {
   uint32_t code = 0;
@@ -504,7 +539,15 @@ static uint8_t huff_decode(JpegDecompressor *d, HuffmanTable *h_table) {
   return -1;
 }
 
-/* F.2.1.2 Decode 8x8 block data unit */
+/**
+ * F.2.1.2 Decode 8x8 block data unit
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
+ * @param component_index The component index specifies which color channel to use (Y, Cb, Cr),
+ *                        used to determine which quantization table and Huffman tables to use
+ * @param buffer The MCU buffer, has size of 64
+ * @param previous_dc The value of the previous DC coefficient, needed to calculate value of current DC coefficient
+ */
 static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int *previous_dc) {
   QuantizationTable *q_table = &d->quant_tables[d->color_components[component_index].quant_table_id];
   HuffmanTable *dc_table = &d->dc_huffman_tables[d->color_components[component_index].dc_huffman_table_id];
@@ -587,6 +630,8 @@ static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int
 
 /**
  * Decode the Huffman coded bitstream
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static MCU *decompress_scanline(JpegDecompressor *d) {
   MCU *mcus = (MCU *)malloc(d->total_mcus * sizeof(MCU));
@@ -608,21 +653,23 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
 }
 
 /**
- * Function to perform inverse DCT for one of the color components of an MCU
+ * Function to perform inverse DCT for one of the color components of an MCU using integers only
+ *
+ * @param buffer The MCU buffer, has size of 64
  */
-static void inverse_dct_component(int *component) {
+static void inverse_dct_component(int *buffer) {
   // ANN algorithm, intermediate values are bit shifted to the left to preserve precision
   // and then bit shifted to the right at the end
   for (int i = 0; i < 8; i++) {
     // Higher accuracy
-    int g0 = (component[0 * 8 + i] * 181) >> 5;
-    int g1 = (component[4 * 8 + i] * 181) >> 5;
-    int g2 = (component[2 * 8 + i] * 59) >> 3;
-    int g3 = (component[6 * 8 + i] * 49) >> 4;
-    int g4 = (component[5 * 8 + i] * 71) >> 4;
-    int g5 = (component[1 * 8 + i] * 251) >> 5;
-    int g6 = (component[7 * 8 + i] * 25) >> 4;
-    int g7 = (component[3 * 8 + i] * 213) >> 5;
+    int g0 = (buffer[0 * 8 + i] * 181) >> 5;
+    int g1 = (buffer[4 * 8 + i] * 181) >> 5;
+    int g2 = (buffer[2 * 8 + i] * 59) >> 3;
+    int g3 = (buffer[6 * 8 + i] * 49) >> 4;
+    int g4 = (buffer[5 * 8 + i] * 71) >> 4;
+    int g5 = (buffer[1 * 8 + i] * 251) >> 5;
+    int g6 = (buffer[7 * 8 + i] * 25) >> 4;
+    int g7 = (buffer[3 * 8 + i] * 213) >> 5;
 
     // Lower accuracy
     // int g0 = (component[0 * 8 + i] * 22) >> 2;
@@ -674,26 +721,26 @@ static void inverse_dct_component(int *component) {
     int b4 = c4 - c8;
     int b6 = c6 - e7;
 
-    component[0 * 8 + i] = (b0 + e7) >> 4;
-    component[1 * 8 + i] = (b1 + b6) >> 4;
-    component[2 * 8 + i] = (b2 + c8) >> 4;
-    component[3 * 8 + i] = (b3 + b4) >> 4;
-    component[4 * 8 + i] = (b3 - b4) >> 4;
-    component[5 * 8 + i] = (b2 - c8) >> 4;
-    component[6 * 8 + i] = (b1 - b6) >> 4;
-    component[7 * 8 + i] = (b0 - e7) >> 4;
+    buffer[0 * 8 + i] = (b0 + e7) >> 4;
+    buffer[1 * 8 + i] = (b1 + b6) >> 4;
+    buffer[2 * 8 + i] = (b2 + c8) >> 4;
+    buffer[3 * 8 + i] = (b3 + b4) >> 4;
+    buffer[4 * 8 + i] = (b3 - b4) >> 4;
+    buffer[5 * 8 + i] = (b2 - c8) >> 4;
+    buffer[6 * 8 + i] = (b1 - b6) >> 4;
+    buffer[7 * 8 + i] = (b0 - e7) >> 4;
   }
 
   for (int i = 0; i < 8; i++) {
     // Higher accuracy
-    int g0 = (component[i * 8 + 0] * 181) >> 5;
-    int g1 = (component[i * 8 + 4] * 181) >> 5;
-    int g2 = (component[i * 8 + 2] * 59) >> 3;
-    int g3 = (component[i * 8 + 6] * 49) >> 4;
-    int g4 = (component[i * 8 + 5] * 71) >> 4;
-    int g5 = (component[i * 8 + 1] * 251) >> 5;
-    int g6 = (component[i * 8 + 7] * 25) >> 4;
-    int g7 = (component[i * 8 + 3] * 213) >> 5;
+    int g0 = (buffer[i * 8 + 0] * 181) >> 5;
+    int g1 = (buffer[i * 8 + 4] * 181) >> 5;
+    int g2 = (buffer[i * 8 + 2] * 59) >> 3;
+    int g3 = (buffer[i * 8 + 6] * 49) >> 4;
+    int g4 = (buffer[i * 8 + 5] * 71) >> 4;
+    int g5 = (buffer[i * 8 + 1] * 251) >> 5;
+    int g6 = (buffer[i * 8 + 7] * 25) >> 4;
+    int g7 = (buffer[i * 8 + 3] * 213) >> 5;
 
     // Lower accuracy
     // int g0 = (component[i * 8 + 0] * 22) >> 2;
@@ -745,28 +792,33 @@ static void inverse_dct_component(int *component) {
     int b4 = c4 - c8;
     int b6 = c6 - e7;
 
-    component[i * 8 + 0] = (b0 + e7) >> 4;
-    component[i * 8 + 1] = (b1 + b6) >> 4;
-    component[i * 8 + 2] = (b2 + c8) >> 4;
-    component[i * 8 + 3] = (b3 + b4) >> 4;
-    component[i * 8 + 4] = (b3 - b4) >> 4;
-    component[i * 8 + 5] = (b2 - c8) >> 4;
-    component[i * 8 + 6] = (b1 - b6) >> 4;
-    component[i * 8 + 7] = (b0 - e7) >> 4;
+    buffer[i * 8 + 0] = (b0 + e7) >> 4;
+    buffer[i * 8 + 1] = (b1 + b6) >> 4;
+    buffer[i * 8 + 2] = (b2 + c8) >> 4;
+    buffer[i * 8 + 3] = (b3 + b4) >> 4;
+    buffer[i * 8 + 4] = (b3 - b4) >> 4;
+    buffer[i * 8 + 5] = (b2 - c8) >> 4;
+    buffer[i * 8 + 6] = (b1 - b6) >> 4;
+    buffer[i * 8 + 7] = (b0 - e7) >> 4;
   }
 }
 
-static void inverse_dct_component_float(int *component) {
+/**
+ * Function to perform inverse DCT for one of the color components of an MCU using floats
+ *
+ * @param buffer The MCU buffer, has size of 64
+ */
+static void inverse_dct_component_float(int *buffer) {
   // ANN algorithm
   for (int i = 0; i < 8; i++) {
-    float g0 = component[0 * 8 + i] * S0;
-    float g1 = component[4 * 8 + i] * S4;
-    float g2 = component[2 * 8 + i] * S2;
-    float g3 = component[6 * 8 + i] * S6;
-    float g4 = component[5 * 8 + i] * S5;
-    float g5 = component[1 * 8 + i] * S1;
-    float g6 = component[7 * 8 + i] * S7;
-    float g7 = component[3 * 8 + i] * S3;
+    float g0 = buffer[0 * 8 + i] * S0;
+    float g1 = buffer[4 * 8 + i] * S4;
+    float g2 = buffer[2 * 8 + i] * S2;
+    float g3 = buffer[6 * 8 + i] * S6;
+    float g4 = buffer[5 * 8 + i] * S5;
+    float g5 = buffer[1 * 8 + i] * S1;
+    float g6 = buffer[7 * 8 + i] * S7;
+    float g7 = buffer[3 * 8 + i] * S3;
 
     float f4 = g4 - g7;
     float f5 = g5 + g6;
@@ -800,25 +852,25 @@ static void inverse_dct_component_float(int *component) {
     float b4 = c4 - c8;
     float b6 = c6 - e7;
 
-    component[0 * 8 + i] = b0 + e7;
-    component[1 * 8 + i] = b1 + b6;
-    component[2 * 8 + i] = b2 + c8;
-    component[3 * 8 + i] = b3 + b4;
-    component[4 * 8 + i] = b3 - b4;
-    component[5 * 8 + i] = b2 - c8;
-    component[6 * 8 + i] = b1 - b6;
-    component[7 * 8 + i] = b0 - e7;
+    buffer[0 * 8 + i] = b0 + e7;
+    buffer[1 * 8 + i] = b1 + b6;
+    buffer[2 * 8 + i] = b2 + c8;
+    buffer[3 * 8 + i] = b3 + b4;
+    buffer[4 * 8 + i] = b3 - b4;
+    buffer[5 * 8 + i] = b2 - c8;
+    buffer[6 * 8 + i] = b1 - b6;
+    buffer[7 * 8 + i] = b0 - e7;
   }
 
   for (int i = 0; i < 8; i++) {
-    float g0 = component[i * 8 + 0] * S0;
-    float g1 = component[i * 8 + 4] * S4;
-    float g2 = component[i * 8 + 2] * S2;
-    float g3 = component[i * 8 + 6] * S6;
-    float g4 = component[i * 8 + 5] * S5;
-    float g5 = component[i * 8 + 1] * S1;
-    float g6 = component[i * 8 + 7] * S7;
-    float g7 = component[i * 8 + 3] * S3;
+    float g0 = buffer[i * 8 + 0] * S0;
+    float g1 = buffer[i * 8 + 4] * S4;
+    float g2 = buffer[i * 8 + 2] * S2;
+    float g3 = buffer[i * 8 + 6] * S6;
+    float g4 = buffer[i * 8 + 5] * S5;
+    float g5 = buffer[i * 8 + 1] * S1;
+    float g6 = buffer[i * 8 + 7] * S7;
+    float g7 = buffer[i * 8 + 3] * S3;
 
     float f4 = g4 - g7;
     float f5 = g5 + g6;
@@ -852,19 +904,21 @@ static void inverse_dct_component_float(int *component) {
     float b4 = c4 - c8;
     float b6 = c6 - e7;
 
-    component[i * 8 + 0] = b0 + e7;
-    component[i * 8 + 1] = b1 + b6;
-    component[i * 8 + 2] = b2 + c8;
-    component[i * 8 + 3] = b3 + b4;
-    component[i * 8 + 4] = b3 - b4;
-    component[i * 8 + 5] = b2 - c8;
-    component[i * 8 + 6] = b1 - b6;
-    component[i * 8 + 7] = b0 - e7;
+    buffer[i * 8 + 0] = b0 + e7;
+    buffer[i * 8 + 1] = b1 + b6;
+    buffer[i * 8 + 2] = b2 + c8;
+    buffer[i * 8 + 3] = b3 + b4;
+    buffer[i * 8 + 4] = b3 - b4;
+    buffer[i * 8 + 5] = b2 - c8;
+    buffer[i * 8 + 6] = b1 - b6;
+    buffer[i * 8 + 7] = b0 - e7;
   }
 }
 
 /**
  * Function to perform conversion from YCbCr to RGB for the 64 pixels within an MCU
+ *
+ * @param buffer The 3 MCU buffers, each has size of 64
  */
 static void ycbcr_to_rgb_pixel(int buffer[3][64]) {
   // https://en.wikipedia.org/wiki/YUV Y'UV444 to RGB888 conversion
@@ -905,7 +959,10 @@ static void ycbcr_to_rgb_pixel(int buffer[3][64]) {
 }
 
 /**
- * Inverse Discrete Cosine Transform
+ * Inverse Discrete Cosine Transform and YCbCr conversion to RGB
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
+ * @param mcus MCU struct that holds all decoded mcus
  */
 static void inverse_dct(JpegDecompressor *d, MCU *mcus) {
   for (int i = 0; i < d->total_mcus; i++) {
@@ -921,6 +978,8 @@ static void inverse_dct(JpegDecompressor *d, MCU *mcus) {
  * Read JPEG markers
  * Return 0 when the SOS marker is found
  * Otherwise return 1 for failure
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static int read_marker(JpegDecompressor *d) {
   int marker;
@@ -991,6 +1050,8 @@ static int read_marker(JpegDecompressor *d) {
 
 /**
  * Helper function to print out filled in values of the JPEG decompressor
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static void print_jpeg_decompressor(JpegDecompressor *d) {
   printf("\n********** DQT **********\n");
@@ -1068,6 +1129,8 @@ static void print_jpeg_decompressor(JpegDecompressor *d) {
 
 /**
  * Initialize the JPEG decompressor with default values
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static void init_jpeg_decompressor(JpegDecompressor *d) {
   d->valid = 1;
@@ -1140,7 +1203,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
     return;
   }
 
-  // print_jpeg_decompressor(&decompressor);
+  print_jpeg_decompressor(&decompressor);
 
 #if TIME
   TIME_NOW(&start);

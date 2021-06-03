@@ -99,8 +99,6 @@ typedef struct ColorComponentInfo {
   // from SOS
   uint8_t dc_huffman_table_id;
   uint8_t ac_huffman_table_id;
-  // uint16_t width_in_blocks;
-  // uint16_t height_in_blocks;
 } ColorComponentInfo;
 
 typedef struct JpegDecompressor {
@@ -123,8 +121,8 @@ typedef struct JpegDecompressor {
   ColorComponentInfo color_components[3];
 
   // from DHT
-  HuffmanTable dc_huffman_tables[4];
-  HuffmanTable ac_huffman_tables[4];
+  HuffmanTable dc_huffman_tables[2];
+  HuffmanTable ac_huffman_tables[2];
 
   // from SOS
   uint8_t ss; // Start of spectral selection
