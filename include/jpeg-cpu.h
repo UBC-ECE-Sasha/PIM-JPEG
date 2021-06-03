@@ -135,11 +135,11 @@ typedef struct JpegDecompressor {
   uint32_t mcu_width;
   uint32_t padding;
   int total_mcus;
+  uint32_t max_h_samp_factor;
+  uint32_t max_v_samp_factor;
 
   // uint16_t restarts_left;
   // uint32_t num_restart_intervals;
-  // uint32_t max_h_samp_factor;
-  // uint32_t max_v_samp_factor;
 
   /* updated each scan */
   // uint8_t first_scan;

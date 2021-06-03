@@ -9,7 +9,8 @@
 #include "bmp.h"
 #include "jpeg-cpu.h"
 
-#define TIME 0
+#define TIME 0      // If set to 1, times how long it takes to do specific parts of the JPEG decoding process
+#define USE_FLOAT 0 // If set to 1, uses the most accurate method of computing inverse DCT by using floats
 
 #if TIME
 #define TIME_NOW(_t) (clock_gettime(CLOCK_MONOTONIC, (_t)))
@@ -379,7 +380,7 @@ static void generate_codes(HuffmanTable *h_table) {
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static void build_huffman_tables(JpegDecompressor *d) {
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 2; i++) {
     if (d->dc_huffman_tables[i].exists) {
       generate_codes(&d->dc_huffman_tables[i]);
     }
@@ -652,6 +653,119 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
   return mcus;
 }
 
+#if USE_FLOAT
+/**
+ * Function to perform inverse DCT for one of the color components of an MCU using floats
+ *
+ * @param buffer The MCU buffer, has size of 64
+ */
+static void inverse_dct_component_float(int *buffer) {
+  // ANN algorithm
+  for (int i = 0; i < 8; i++) {
+    float g0 = buffer[0 * 8 + i] * S0;
+    float g1 = buffer[4 * 8 + i] * S4;
+    float g2 = buffer[2 * 8 + i] * S2;
+    float g3 = buffer[6 * 8 + i] * S6;
+    float g4 = buffer[5 * 8 + i] * S5;
+    float g5 = buffer[1 * 8 + i] * S1;
+    float g6 = buffer[7 * 8 + i] * S7;
+    float g7 = buffer[3 * 8 + i] * S3;
+
+    float f4 = g4 - g7;
+    float f5 = g5 + g6;
+    float f6 = g5 - g6;
+    float f7 = g4 + g7;
+
+    float e2 = g2 - g3;
+    float e3 = g2 + g3;
+    float e5 = f5 - f7;
+    float e7 = f5 + f7;
+    float e8 = f4 + f6;
+
+    float d2 = e2 * M1;
+    float d4 = f4 * M2;
+    float d5 = e5 * M3;
+    float d6 = f6 * M4;
+    float d8 = e8 * M5;
+
+    float c0 = g0 + g1;
+    float c1 = g0 - g1;
+    float c2 = d2 - e3;
+    float c4 = d4 + d8;
+    float c5 = d5 + e7;
+    float c6 = d6 - d8;
+    float c8 = c5 - c6;
+
+    float b0 = c0 + e3;
+    float b1 = c1 + c2;
+    float b2 = c1 - c2;
+    float b3 = c0 - e3;
+    float b4 = c4 - c8;
+    float b6 = c6 - e7;
+
+    buffer[0 * 8 + i] = b0 + e7;
+    buffer[1 * 8 + i] = b1 + b6;
+    buffer[2 * 8 + i] = b2 + c8;
+    buffer[3 * 8 + i] = b3 + b4;
+    buffer[4 * 8 + i] = b3 - b4;
+    buffer[5 * 8 + i] = b2 - c8;
+    buffer[6 * 8 + i] = b1 - b6;
+    buffer[7 * 8 + i] = b0 - e7;
+  }
+
+  for (int i = 0; i < 8; i++) {
+    float g0 = buffer[i * 8 + 0] * S0;
+    float g1 = buffer[i * 8 + 4] * S4;
+    float g2 = buffer[i * 8 + 2] * S2;
+    float g3 = buffer[i * 8 + 6] * S6;
+    float g4 = buffer[i * 8 + 5] * S5;
+    float g5 = buffer[i * 8 + 1] * S1;
+    float g6 = buffer[i * 8 + 7] * S7;
+    float g7 = buffer[i * 8 + 3] * S3;
+
+    float f4 = g4 - g7;
+    float f5 = g5 + g6;
+    float f6 = g5 - g6;
+    float f7 = g4 + g7;
+
+    float e2 = g2 - g3;
+    float e3 = g2 + g3;
+    float e5 = f5 - f7;
+    float e7 = f5 + f7;
+    float e8 = f4 + f6;
+
+    float d2 = e2 * M1;
+    float d4 = f4 * M2;
+    float d5 = e5 * M3;
+    float d6 = f6 * M4;
+    float d8 = e8 * M5;
+
+    float c0 = g0 + g1;
+    float c1 = g0 - g1;
+    float c2 = d2 - e3;
+    float c4 = d4 + d8;
+    float c5 = d5 + e7;
+    float c6 = d6 - d8;
+    float c8 = c5 - c6;
+
+    float b0 = c0 + e3;
+    float b1 = c1 + c2;
+    float b2 = c1 - c2;
+    float b3 = c0 - e3;
+    float b4 = c4 - c8;
+    float b6 = c6 - e7;
+
+    buffer[i * 8 + 0] = b0 + e7;
+    buffer[i * 8 + 1] = b1 + b6;
+    buffer[i * 8 + 2] = b2 + c8;
+    buffer[i * 8 + 3] = b3 + b4;
+    buffer[i * 8 + 4] = b3 - b4;
+    buffer[i * 8 + 5] = b2 - c8;
+    buffer[i * 8 + 6] = b1 - b6;
+    buffer[i * 8 + 7] = b0 - e7;
+  }
+}
+#else
 /**
  * Function to perform inverse DCT for one of the color components of an MCU using integers only
  *
@@ -802,118 +916,7 @@ static void inverse_dct_component(int *buffer) {
     buffer[i * 8 + 7] = (b0 - e7) >> 4;
   }
 }
-
-/**
- * Function to perform inverse DCT for one of the color components of an MCU using floats
- *
- * @param buffer The MCU buffer, has size of 64
- */
-static void inverse_dct_component_float(int *buffer) {
-  // ANN algorithm
-  for (int i = 0; i < 8; i++) {
-    float g0 = buffer[0 * 8 + i] * S0;
-    float g1 = buffer[4 * 8 + i] * S4;
-    float g2 = buffer[2 * 8 + i] * S2;
-    float g3 = buffer[6 * 8 + i] * S6;
-    float g4 = buffer[5 * 8 + i] * S5;
-    float g5 = buffer[1 * 8 + i] * S1;
-    float g6 = buffer[7 * 8 + i] * S7;
-    float g7 = buffer[3 * 8 + i] * S3;
-
-    float f4 = g4 - g7;
-    float f5 = g5 + g6;
-    float f6 = g5 - g6;
-    float f7 = g4 + g7;
-
-    float e2 = g2 - g3;
-    float e3 = g2 + g3;
-    float e5 = f5 - f7;
-    float e7 = f5 + f7;
-    float e8 = f4 + f6;
-
-    float d2 = e2 * M1;
-    float d4 = f4 * M2;
-    float d5 = e5 * M3;
-    float d6 = f6 * M4;
-    float d8 = e8 * M5;
-
-    float c0 = g0 + g1;
-    float c1 = g0 - g1;
-    float c2 = d2 - e3;
-    float c4 = d4 + d8;
-    float c5 = d5 + e7;
-    float c6 = d6 - d8;
-    float c8 = c5 - c6;
-
-    float b0 = c0 + e3;
-    float b1 = c1 + c2;
-    float b2 = c1 - c2;
-    float b3 = c0 - e3;
-    float b4 = c4 - c8;
-    float b6 = c6 - e7;
-
-    buffer[0 * 8 + i] = b0 + e7;
-    buffer[1 * 8 + i] = b1 + b6;
-    buffer[2 * 8 + i] = b2 + c8;
-    buffer[3 * 8 + i] = b3 + b4;
-    buffer[4 * 8 + i] = b3 - b4;
-    buffer[5 * 8 + i] = b2 - c8;
-    buffer[6 * 8 + i] = b1 - b6;
-    buffer[7 * 8 + i] = b0 - e7;
-  }
-
-  for (int i = 0; i < 8; i++) {
-    float g0 = buffer[i * 8 + 0] * S0;
-    float g1 = buffer[i * 8 + 4] * S4;
-    float g2 = buffer[i * 8 + 2] * S2;
-    float g3 = buffer[i * 8 + 6] * S6;
-    float g4 = buffer[i * 8 + 5] * S5;
-    float g5 = buffer[i * 8 + 1] * S1;
-    float g6 = buffer[i * 8 + 7] * S7;
-    float g7 = buffer[i * 8 + 3] * S3;
-
-    float f4 = g4 - g7;
-    float f5 = g5 + g6;
-    float f6 = g5 - g6;
-    float f7 = g4 + g7;
-
-    float e2 = g2 - g3;
-    float e3 = g2 + g3;
-    float e5 = f5 - f7;
-    float e7 = f5 + f7;
-    float e8 = f4 + f6;
-
-    float d2 = e2 * M1;
-    float d4 = f4 * M2;
-    float d5 = e5 * M3;
-    float d6 = f6 * M4;
-    float d8 = e8 * M5;
-
-    float c0 = g0 + g1;
-    float c1 = g0 - g1;
-    float c2 = d2 - e3;
-    float c4 = d4 + d8;
-    float c5 = d5 + e7;
-    float c6 = d6 - d8;
-    float c8 = c5 - c6;
-
-    float b0 = c0 + e3;
-    float b1 = c1 + c2;
-    float b2 = c1 - c2;
-    float b3 = c0 - e3;
-    float b4 = c4 - c8;
-    float b6 = c6 - e7;
-
-    buffer[i * 8 + 0] = b0 + e7;
-    buffer[i * 8 + 1] = b1 + b6;
-    buffer[i * 8 + 2] = b2 + c8;
-    buffer[i * 8 + 3] = b3 + b4;
-    buffer[i * 8 + 4] = b3 - b4;
-    buffer[i * 8 + 5] = b2 - c8;
-    buffer[i * 8 + 6] = b1 - b6;
-    buffer[i * 8 + 7] = b0 - e7;
-  }
-}
+#endif
 
 /**
  * Function to perform conversion from YCbCr to RGB for the 64 pixels within an MCU
@@ -967,7 +970,11 @@ static void ycbcr_to_rgb_pixel(int buffer[3][64]) {
 static void inverse_dct(JpegDecompressor *d, MCU *mcus) {
   for (int i = 0; i < d->total_mcus; i++) {
     for (int j = 0; j < d->num_color_components; j++) {
+#if USE_FLOAT
+      inverse_dct_component_float(mcus[i].buffer[j]);
+#else
       inverse_dct_component(mcus[i].buffer[j]);
+#endif
     }
 
     ycbcr_to_rgb_pixel(mcus[i].buffer);
@@ -1017,7 +1024,7 @@ static int read_marker(JpegDecompressor *d) {
     case M_SOF2:
       // TODO: handle progressive JPEG
       d->valid = 0;
-      fprintf(stderr, "Got progressive JPEG, not supported yet\n", marker);
+      fprintf(stderr, "Got progressive JPEG: FF %X, not supported yet\n", marker);
       break;
 
     case M_DHT:
@@ -1083,7 +1090,7 @@ static void print_jpeg_decompressor(JpegDecompressor *d) {
   }
 
   printf("\n********** DHT **********\n");
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 2; i++) {
     if (d->dc_huffman_tables[i].exists) {
       printf("DC Table ID: %d\n", i);
       for (int j = 0; j < 16; j++) {
@@ -1096,7 +1103,7 @@ static void print_jpeg_decompressor(JpegDecompressor *d) {
       printf("\n");
     }
   }
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < 2; i++) {
     if (d->ac_huffman_tables[i].exists) {
       printf("AC Table ID: %d\n", i);
       for (int j = 0; j < 16; j++) {
@@ -1137,11 +1144,15 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
 
   for (int i = 0; i < 4; i++) {
     d->quant_tables[i].exists = 0;
-    d->dc_huffman_tables[i].exists = 0;
-    d->ac_huffman_tables[i].exists = 0;
-  }
-  for (int i = 0; i < 3; i++) {
-    d->color_components[i].exists = 0;
+
+    if (i < 2) {
+      d->color_components[i].exists = 0;
+      d->dc_huffman_tables[i].exists = 0;
+      d->ac_huffman_tables[i].exists = 0;
+
+    } else if (i < 3) {
+      d->color_components[i].exists = 0;
+    }
   }
 
   // These fields will be filled when reading the JPEG header information
@@ -1164,6 +1175,14 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
   d->padding = 0;
 }
 
+/**
+ * Public function exposed for other files to call
+ * Entry point for decoding JPEG using CPU
+ *
+ * @param file_length The total length of a file in bytes
+ * @param filename The filename of the input file
+ * @param buffer TODO: don't know if this is used, remove if not
+ */
 void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
   JpegDecompressor decompressor;
   int res = 1;
