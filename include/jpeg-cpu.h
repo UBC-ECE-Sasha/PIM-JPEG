@@ -134,9 +134,12 @@ typedef struct JpegDecompressor {
   uint32_t mcu_height;
   uint32_t mcu_width;
   uint32_t padding;
-  int total_mcus;
-  uint32_t max_h_samp_factor;
-  uint32_t max_v_samp_factor;
+
+  // used when horizontal or vertical sampling factors are not 1
+  uint32_t mcu_height_real;   // mcu_height + padding, padding must be 0 or 1
+  uint32_t mcu_width_real;    // mcu_width + padding, padding must be 0 or 1
+  uint32_t max_h_samp_factor; // maximum value of horizontal sampling factors amongst all color components
+  uint32_t max_v_samp_factor; // maximum value of vertical sampling factors amongst all color components
 
   // uint16_t restarts_left;
   // uint32_t num_restart_intervals;

@@ -274,10 +274,12 @@ static void process_SOFn(JpegDecompressor *d) {
     fprintf(stderr, "Error: Invalid SOF - dimensions: %d x %d\n", d->image_width, d->image_height);
     return;
   }
+
   d->mcu_height = (d->image_height + 7) / 8;
   d->mcu_width = (d->image_width + 7) / 8;
   d->padding = d->image_width % 4;
-  d->total_mcus = d->mcu_height * d->mcu_width;
+  d->mcu_height_real = d->mcu_height;
+  d->mcu_width_real = d->mcu_width;
 
   // Should be 3
   d->num_color_components = read_byte(d); // Nf
@@ -303,7 +305,35 @@ static void process_SOFn(JpegDecompressor *d) {
     uint8_t factor = read_byte(d);
     component->h_samp_factor = (factor >> 4) & 0x0F; // Hi
     component->v_samp_factor = factor & 0x0F;        // Vi
-    component->quant_table_id = read_byte(d);        // Tqi
+    if (component_id == 1) {
+      // Only luminance channel can have horizontal or vertical sampling factor greater than 1
+      if ((component->h_samp_factor != 1 && component->h_samp_factor != 2) ||
+          (component->v_samp_factor != 1 && component->v_samp_factor != 2)) {
+        d->valid = 0;
+        fprintf(stderr,
+                "Error: Invalid SOF - horizontal or vertical sampling factor for luminance out of range %d %d\n",
+                component->h_samp_factor, component->v_samp_factor);
+        return;
+      }
+
+      if (component->h_samp_factor == 2 && d->mcu_width % 2 == 1) {
+        // Add padding to real MCU width if horizontal sampling factor is 2
+        d->mcu_width_real++;
+      }
+      if (component->v_samp_factor == 2 && d->mcu_height % 2 == 1) {
+        // Add padding to real MCU height if vertical sampling factor is 2
+        d->mcu_height_real++;
+      }
+
+      d->max_h_samp_factor = component->h_samp_factor;
+      d->max_v_samp_factor = component->v_samp_factor;
+    } else if (component->h_samp_factor != 1 || component->v_samp_factor != 1) {
+      d->valid = 0;
+      fprintf(stderr, "Error: Invalid SOF - horizontal and vertical sampling factor for Cr and Cb not 1");
+      return;
+    }
+
+    component->quant_table_id = read_byte(d); // Tqi
   }
 
   if (length - 8 - (3 * d->num_color_components) != 0) {
@@ -629,30 +659,6 @@ static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int
   return 0;
 }
 
-/**
- * Decode the Huffman coded bitstream
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- */
-static MCU *decompress_scanline(JpegDecompressor *d) {
-  MCU *mcus = (MCU *)malloc(d->total_mcus * sizeof(MCU));
-  int previous_dcs[3] = {0};
-
-  // TODO: iterate through scan lines instead of total_mcus
-  for (int i = 0; i < d->total_mcus; i++) {
-    // TODO: Take into account Restart Intervals
-    for (int j = 0; j < d->num_color_components; j++) {
-      if (decode_mcu(d, j, mcus[i].buffer[j], &previous_dcs[j]) != 0) {
-        fprintf(stderr, "Error: Invalid MCU\n");
-        free(mcus);
-        return NULL;
-      }
-    }
-  }
-
-  return mcus;
-}
-
 #if USE_FLOAT
 /**
  * Function to perform inverse DCT for one of the color components of an MCU using floats
@@ -962,24 +968,88 @@ static void ycbcr_to_rgb_pixel(int buffer[3][64]) {
 }
 
 /**
+ * Decode the Huffman coded bitstream, compute inverse DCT, and convert from YCbCr to RGB
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
+ */
+static MCU *decompress_scanline(JpegDecompressor *d) {
+  MCU *mcus = (MCU *)malloc((d->mcu_height_real * d->mcu_width_real) * sizeof(MCU));
+  int previous_dcs[3] = {0};
+
+  for (uint32_t row = 0; row < d->mcu_height; row += d->max_v_samp_factor) {
+    for (uint32_t col = 0; col < d->mcu_width; col += d->max_h_samp_factor) {
+      // TODO: Restart Intervals
+
+      for (uint32_t index = 0; index < d->num_color_components; index++) {
+        for (uint32_t y = 0; y < d->color_components[index].v_samp_factor; y++) {
+          for (uint32_t x = 0; x < d->color_components[index].h_samp_factor; x++) {
+            // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
+            // + (current col + horizontal sampling)
+
+            // Decode Huffman coded bitstream
+            if (decode_mcu(d, index, mcus[(row + y) * d->mcu_width_real + (col + x)].buffer[index],
+                           &previous_dcs[index]) != 0) {
+              d->valid = 0;
+              fprintf(stderr, "Error: Invalid MCU\n");
+              free(mcus);
+              return NULL;
+            }
+
+            // Compute inverse DCT with ANN algorithm
+#if USE_FLOAT
+            inverse_dct_component_float(mcus[(row + y) * d->mcu_width_real + (col + x)].buffer[index]);
+#else
+            inverse_dct_component(mcus[(row + y) * d->mcu_width_real + (col + x)].buffer[index]);
+#endif
+          }
+        }
+      }
+
+      // Convert from YCbCr to RGB
+      for (uint32_t y = 0; y < d->max_v_samp_factor; y++) {
+        for (uint32_t x = 0; x < d->max_h_samp_factor; x++) {
+          ycbcr_to_rgb_pixel(mcus[(row + y) * d->mcu_width_real + (col + x)].buffer);
+        }
+      }
+    }
+  }
+
+  return mcus;
+}
+
+/**
  * Inverse Discrete Cosine Transform and YCbCr conversion to RGB
  *
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  * @param mcus MCU struct that holds all decoded mcus
  */
-static void inverse_dct(JpegDecompressor *d, MCU *mcus) {
-  for (int i = 0; i < d->total_mcus; i++) {
-    for (int j = 0; j < d->num_color_components; j++) {
-#if USE_FLOAT
-      inverse_dct_component_float(mcus[i].buffer[j]);
-#else
-      inverse_dct_component(mcus[i].buffer[j]);
-#endif
-    }
+// static void inverse_dct(JpegDecompressor *d, MCU *mcus) {
+//   for (uint32_t row = 0; row < d->mcu_height; row += d->max_v_samp_factor) {
+//     for (uint32_t col = 0; col < d->mcu_width; col += d->max_h_samp_factor) {
+//       // Perform inverse DCT on each MCU
+//       for (uint32_t index = 0; index < d->num_color_components; index++) {
+//         for (uint32_t y = 0; y < d->color_components[index].v_samp_factor; y++) {
+//           for (uint32_t x = 0; x < d->color_components[index].h_samp_factor; x++) {
+//             // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
+//             // + (current col + horizontal sampling)
+// #if USE_FLOAT
+//             inverse_dct_component_float(mcus[(row + y) * d->mcu_width_real + (col + x)].buffer[index]);
+// #else
+//             inverse_dct_component(mcus[(row + y) * d->mcu_width_real + (col + x)].buffer[index]);
+// #endif
+//           }
+//         }
+//       }
 
-    ycbcr_to_rgb_pixel(mcus[i].buffer);
-  }
-}
+//       // Perform conversion of YCbCr to RGB
+//       for (uint32_t y = 0; y < d->max_v_samp_factor; y++) {
+//         for (uint32_t x = 0; x < d->max_h_samp_factor; x++) {
+//           ycbcr_to_rgb_pixel(mcus[(row + y) * d->mcu_width_real + (col + x)].buffer);
+//         }
+//       }
+//     }
+//   }
+// }
 
 /**
  * Read JPEG markers
@@ -1222,15 +1292,16 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
     return;
   }
 
-  print_jpeg_decompressor(&decompressor);
+  // print_jpeg_decompressor(&decompressor);
 
 #if TIME
   TIME_NOW(&start);
 #endif
 
-  // Process Huffman coded bitstream
+  // Process Huffman coded bitstream, perform inverse DCT, and convert YCbCr to RGB
   MCU *mcus = decompress_scanline(&decompressor);
-  if (mcus == NULL) {
+  if (mcus == NULL || !decompressor.valid) {
+    fprintf(stderr, "Error: Invalid JPEG\n");
     return;
   }
 
@@ -1242,7 +1313,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
   TIME_NOW(&start);
 #endif
   // Compute inverse DCT and convert YCbCr to RGB
-  inverse_dct(&decompressor, mcus);
+  // inverse_dct(&decompressor, mcus);
 
 #if TIME
   TIME_NOW(&end);
