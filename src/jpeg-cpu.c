@@ -1348,7 +1348,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
     for (int x = 0; x < decompressor.image_width; x++) {
       uint32_t mcu_column = x / 8;
       uint32_t pixel_column = x % 8;
-      uint32_t mcu_index = mcu_row * decompressor.mcu_width + mcu_column;
+      uint32_t mcu_index = mcu_row * decompressor.mcu_width_real + mcu_column;
       uint32_t pixel_index = pixel_row * 8 + pixel_column;
       ptr[0] = mcus[mcu_index].buffer[2][pixel_index];
       ptr[1] = mcus[mcu_index].buffer[1][pixel_index];
@@ -1381,6 +1381,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
   write_bmp(filename_copy, &image);
   printf("Decoded to: %s\n", filename_copy);
 
+  free(filename_copy);
   free(image.data);
   free(mcus);
   return;
