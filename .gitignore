@@ -1,5 +1,6 @@
 .vscode
-host-16
+host-*
+jpeg-dpu-*
 
 *.bmp
 DSCF5148.jpg

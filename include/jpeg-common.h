@@ -9,9 +9,6 @@
 
 #define MIN_GET_BITS 15
 
-#define HUFFMAN_TABLE_CLASS_DC 0
-#define HUFFMAN_TABLE_CLASS_AC 1
-
 /**
  * JPEG Markers: CCITT Rec T.81 page 32
  */
@@ -102,9 +99,10 @@ typedef struct ColorComponentInfo {
 } ColorComponentInfo;
 
 typedef struct JpegDecompressor {
-  char *ptr;       // current position within JPEG
-  char *data;      // start position of JPEG
-  uint64_t length; // total length of JPEG
+  char *ptr;  // current position within JPEG
+  char *data; // start position of JPEG
+  uint32_t index;
+  uint32_t length; // total length of JPEG
 
   uint8_t valid; // indicates whether file is actually a JPEG file
 
@@ -152,7 +150,7 @@ typedef struct JpegDecompressor {
   // uint32_t rows_per_scan;
   // uint8_t blocks_per_MCU;
 
-  /* bit buffer */
+  // bit buffer
   uint32_t get_buffer;
   uint32_t bits_left;
 } JpegDecompressor;

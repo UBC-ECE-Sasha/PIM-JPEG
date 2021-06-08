@@ -12,8 +12,9 @@ ifeq ($(DEBUG_DPU), 1)
 	CFLAGS+=-DDEBUG_DPU
 endif
 
-# Default NR_TASKLETS
-NR_TASKLETS = 16
+# Default NR_DPUS and NR_TASKLETS
+NR_DPUS = 1
+NR_TASKLETS = 1
 
 # Bulk (dpu_prepare_xfer) is default
 BULK = 1
@@ -37,17 +38,19 @@ SOURCE = src/jpeg-host.c src/bmp.c src/jpeg-cpu.c
 
 default: all
 
-all: dpu host
+all: host
 
 clean:
-	$(RM) src/host-*
-	$(MAKE) -C dpu-grep $@
+	$(RM) host-*
+	$(MAKE) -C src/dpu clean
 
 dpu:
 	DEBUG=$(DEBUG_DPU) NR_TASKLETS=$(NR_TASKLETS) SEQREAD_CACHE_SIZE=$(SEQREAD_CACHE_SIZE) MAX_FILES_PER_DPU=$(MAX_FILES_PER_DPU)  $(MAKE) -C dpu-grep
 
 host: $(SOURCE)
 	$(CC) $(CFLAGS) -DNR_TASKLETS=$(NR_TASKLETS) -DMAX_FILES_PER_DPU=$(MAX_FILES_PER_DPU) $^ -o $@-$(NR_TASKLETS) $(DPU_OPTS)
+	NR_DPUS=$(NR_DPUS) NR_TASKLETS=$(NR_TASKLETS) \
+	$(MAKE) -C src/dpu
 
 tags:
 	ctags -R -f tags . ~/projects/upmem/upmem-sdk

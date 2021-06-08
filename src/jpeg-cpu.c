@@ -7,7 +7,7 @@
 #include <time.h>
 
 #include "bmp.h"
-#include "jpeg-cpu.h"
+#include "jpeg-common.h"
 
 #define TIME 0      // If set to 1, times how long it takes to do specific parts of the JPEG decoding process
 #define USE_FLOAT 0 // If set to 1, uses the most accurate method of computing inverse DCT by using floats
@@ -1261,7 +1261,7 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
  *
  * @param file_length The total length of a file in bytes
  * @param filename The filename of the input file
- * @param buffer TODO: don't know if this is used, remove if not
+ * @param buffer The buffer containing all file data
  */
 void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
   JpegDecompressor decompressor;

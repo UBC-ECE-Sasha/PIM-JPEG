@@ -14,13 +14,10 @@
 
 // #include "PIM-common/host/include/host.h"
 #include "host.h"
-#include "jpeg-cpu.h"
+#include "jpeg-common.h"
 #include "jpeg-host.h"
 
-#define DPU_PROGRAM "dpu-jpeg/jpeg.dpu"
-#define TOTAL_MRAM MEGABYTE(32)
-#define MAX_OUTPUT_LENGTH MEGABYTE(1)
-#define MAX_INPUT_LENGTH (TOTAL_MRAM - MAX_OUTPUT_LENGTH)
+#define DPU_PROGRAM "src/dpu/jpeg-dpu"
 #define MIN_CHUNK_SIZE 256 // not worthwhile making another tasklet work for data less than this
 #define TEMP_LENGTH 256
 #define ALL_RANKS (rank_count == 64 ? 0xFFFFFFFFFFFFFFFF : (1UL << rank_count) - 1)
@@ -358,7 +355,7 @@ static int read_input_host(char *in_file, uint64_t length, char *buffer) {
 static int dpu_main(struct jpeg_options *opts, host_results *results) {
   char dpu_program_name[32];
   struct host_rank_context *ctx;
-  struct dpu_set_t dpus, dpu_rank;
+  struct dpu_set_t dpus, dpu_rank, dpu;
   int status;
   uint8_t rank_id;
   uint64_t rank_status = 0; // bitmap indicating if the rank is busy or free
@@ -373,7 +370,8 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
 #endif // BULK_TRANSFER
 
   // allocate all of the DPUS up-front, then check to see how many we got
-  status = dpu_alloc(DPU_ALLOCATE_ALL, NULL, &dpus);
+  // status = dpu_alloc(DPU_ALLOCATE_ALL, NULL, &dpus);
+  status = dpu_alloc(1, NULL, &dpus);
   if (status != DPU_OK) {
     fprintf(stderr, "Error %i allocating DPUs\n", status);
     return -3;
@@ -409,139 +407,177 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   uint32_t remaining_file_count = opts->input_file_count;
   dbg_printf("Input file count=%u\n", opts->input_file_count);
 
-  // as long as there are still files to process
-  while (remaining_file_count) {
-    struct host_dpu_descriptor *rank_input;
-    uint8_t dpu_id = 0;
-    uint32_t prepared_file_count;
-    uint8_t prepared_dpu_count = 0;
+  // TODO: Remove later
+  char *buffer = malloc(MAX_INPUT_LENGTH);
+  for (; file_index < opts->input_file_count; file_index++) {
+    struct stat st;
+    char *filename = input_files[file_index];
 
-#ifdef STATISTICS
-    clock_gettime(CLOCK_MONOTONIC, &start_load);
-#endif // STATISTICS
-
-    rank_input = calloc(dpus_per_rank, sizeof(struct host_dpu_descriptor));
-
-    // set the dpu_count to 0 for each input
-    for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
-      rank_input[dpu_id].file_count = 0;
-      rank_input[dpu_id].total_length = 0;
-      rank_input[dpu_id].buffer = malloc(MAX_INPUT_LENGTH);
+    // read the length of the next input file
+    stat(filename, &st);
+    uint64_t file_length = st.st_size;
+    if (file_length > MAX_INPUT_LENGTH) {
+      dbg_printf("Skipping file %s (%lu > %u)\n", filename, file_length, MAX_INPUT_LENGTH);
+      continue;
     }
 
-    // prepare enough files to fill the rank, trying to fit in as many
-    // files as possible in a round-robin fashion to spread out the load
-    // across (1) all DPUs of the rank, (2) all tasklets in a DPU
-    for (prepared_file_count = 0; remaining_file_count; remaining_file_count--, file_index++) {
-      uint8_t dpus_searched;
-      struct stat st;
-      char *filename = input_files[file_index];
-
-      // read the length of the next input file
-      stat(filename, &st);
-      uint64_t file_length = st.st_size;
-      if (file_length > MAX_INPUT_LENGTH) {
-        dbg_printf("Skipping file %s (%lu > %u)\n", input_files[file_index], file_length, MAX_INPUT_LENGTH);
-        continue;
-      }
-
-      // find a free slot among the DPUs
-      // 'free' means number of tasklets and free memory
-      char *next;
-      for (dpus_searched = 0; dpus_searched < dpus_per_rank; dpus_searched++) {
-        dpu_id++;
-        dpu_id %= dpus_per_rank;
-        if (rank_input[dpu_id].file_count < MAX_FILES_PER_DPU &&
-            (rank_input[dpu_id].total_length + file_length < MAX_INPUT_LENGTH)) {
-          dbg_printf("Allocating %s to DPU %u file count=%u, length=%lu, total_length=%lu\n", filename, dpu_id,
-                     rank_input[dpu_id].file_count, file_length, rank_input[dpu_id].total_length + file_length);
-          file_descriptor *input = &rank_input[dpu_id].files[rank_input[dpu_id].file_count];
-
-          // prepare the input buffer descriptor
-          memset(input, 0, sizeof(file_descriptor));
-          input->start = rank_input[dpu_id].total_length;
-          input->length = file_length;
-
-          // read the file into the descriptor
-          next = rank_input[dpu_id].buffer + rank_input[dpu_id].total_length;
-          rank_input[dpu_id].filename[rank_input[dpu_id].file_count] = strdup(filename);
-          if (read_input_host(filename, file_length, next) < 0) {
-            dbg_printf("Skipping invalid file %s\n", input_files[file_index]);
-            break;
-          }
-
-          // if this is the first file for this DPU, mark the DPU as used
-          if (rank_input[dpu_id].file_count == 0) {
-            prepared_dpu_count++;
-#ifdef STATISTICS
-            total_dpus_launched++;
-#endif // STATISTICS
-          }
-
-          rank_input[dpu_id].file_count++;
-          rank_input[dpu_id].total_length += file_length; // if we need alignment, do it here
-          prepared_file_count++;
-#ifdef STATISTICS
-          total_data_processed += file_length;
-#endif // STATISTICS
-          break;
-        }
-      }
-
-      // did we look at all possible DPUs and not find an empty place?
-      if (dpus_searched == dpus_per_rank)
-        break;
+    // read the file into the descriptor
+    if (read_input_host(filename, file_length, buffer) < 0) {
+      dbg_printf("Skipping invalid file %s\n", input_files[file_index]);
+      break;
     }
 
-#ifdef STATISTICS
-    clock_gettime(CLOCK_MONOTONIC, &stop_load);
-    double load_time = TIME_DIFFERENCE(start_load, stop_load);
-    printf("[%u] %u of %u MB (%2.2f%%)loaded in %2.2f s\n", dpu_id, rank_input[dpu_id].total_length, TOTAL_MRAM >> 20,
-           (double)rank_input[dpu_id].total_length * 100 / TOTAL_MRAM, load_time);
-#endif // STATISTICS
-    dbg_printf("Prepared %u files in %u DPUs\n", prepared_file_count, prepared_dpu_count);
-    submitted = 0;
-    while (!submitted) {
-      while (rank_status == ALL_RANKS) {
-        int ret = check_for_completed_rank(dpus, &rank_status, ctx, results);
-        if (ret == -2) {
-          printf("A rank has faulted\n");
-          status = PROG_FAULT;
-          goto done;
-        }
-      }
+    dpu_input_t dpu_input;
+    dpu_input.file_length = file_length;
+    uint32_t copy_length = file_length + (8 - file_length % 8);
 
-      // submit those files to a free rank, and save the files in the host context
-      DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
-        if (!(rank_status & (1UL << rank_id))) {
-          rank_status |= (1UL << rank_id);
-          dbg_printf("Submitted to rank %u status=%s\n", rank_id, to_bin(rank_status, rank_count));
-#ifdef STATISTICS
-          clock_gettime(CLOCK_MONOTONIC, &ctx[rank_id].start_rank);
-#endif // STATISTICS
-          status = scale_rank(dpu_rank, rank_id, rank_input, prepared_file_count, prepared_dpu_count, opts);
-          ctx[rank_id].dpus = rank_input;
-          ctx[rank_id].dpu_count = prepared_dpu_count;
-          submitted = 1;
-          break;
-        }
-      }
+    DPU_ASSERT(dpu_copy_to(dpus, "input", 0, &dpu_input, 8));
+    DPU_ASSERT(dpu_copy_to(dpus, "buffer", 0, buffer, copy_length));
 
-      if (!submitted)
-        printf("ERROR: failed to submit\n");
-    }
+    DPU_ASSERT(dpu_launch(dpus, DPU_SYNCHRONOUS));
+
+    DPU_FOREACH(dpus, dpu) { DPU_ASSERT(dpu_log_read(dpu, stdout)); }
   }
+  free(buffer);
 
-  // all files have been submitted; wait for all jobs to finish
-  dbg_printf("Waiting for all DPUs to finish\n");
-  while (rank_status) {
-    int ret = check_for_completed_rank(dpus, &rank_status, ctx, results);
-    if (ret == -2) {
-      status = PROG_FAULT;
-      goto done;
-    }
-    usleep(1);
-  }
+  //   // as long as there are still files to process
+  //   while (remaining_file_count) {
+  //     struct host_dpu_descriptor *rank_input;
+  //     uint8_t dpu_id = 0;
+  //     uint32_t prepared_file_count;
+  //     uint8_t prepared_dpu_count = 0;
+
+  // #ifdef STATISTICS
+  //     clock_gettime(CLOCK_MONOTONIC, &start_load);
+  // #endif // STATISTICS
+
+  //     rank_input = calloc(dpus_per_rank, sizeof(struct host_dpu_descriptor));
+
+  //     // set the dpu_count to 0 for each input
+  //     for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
+  //       rank_input[dpu_id].file_count = 0;
+  //       rank_input[dpu_id].total_length = 0;
+  //       rank_input[dpu_id].buffer = malloc(MAX_INPUT_LENGTH);
+  //     }
+
+  //     // prepare enough files to fill the rank, trying to fit in as many
+  //     // files as possible in a round-robin fashion to spread out the load
+  //     // across (1) all DPUs of the rank, (2) all tasklets in a DPU
+  //     for (prepared_file_count = 0; remaining_file_count; remaining_file_count--, file_index++) {
+  //       uint8_t dpus_searched;
+  //       struct stat st;
+  //       char *filename = input_files[file_index];
+
+  //       // read the length of the next input file
+  //       stat(filename, &st);
+  //       uint64_t file_length = st.st_size;
+  //       if (file_length > MAX_INPUT_LENGTH) {
+  //         dbg_printf("Skipping file %s (%lu > %u)\n", input_files[file_index], file_length, MAX_INPUT_LENGTH);
+  //         continue;
+  //       }
+
+  //       // find a free slot among the DPUs
+  //       // 'free' means number of tasklets and free memory
+  //       char *next;
+  //       for (dpus_searched = 0; dpus_searched < dpus_per_rank; dpus_searched++) {
+  //         dpu_id++;
+  //         dpu_id %= dpus_per_rank;
+  //         if (rank_input[dpu_id].file_count < MAX_FILES_PER_DPU &&
+  //             (rank_input[dpu_id].total_length + file_length < MAX_INPUT_LENGTH)) {
+  //           dbg_printf("Allocating %s to DPU %u file count=%u, length=%lu, total_length=%lu\n", filename, dpu_id,
+  //                      rank_input[dpu_id].file_count, file_length, rank_input[dpu_id].total_length + file_length);
+  //           file_descriptor *input = &rank_input[dpu_id].files[rank_input[dpu_id].file_count];
+
+  //           // prepare the input buffer descriptor
+  //           memset(input, 0, sizeof(file_descriptor));
+  //           input->start = rank_input[dpu_id].total_length;
+  //           input->length = file_length;
+
+  //           // read the file into the descriptor
+  //           next = rank_input[dpu_id].buffer + rank_input[dpu_id].total_length;
+  //           rank_input[dpu_id].filename[rank_input[dpu_id].file_count] = strdup(filename);
+  //           if (read_input_host(filename, file_length, next) < 0) {
+  //             dbg_printf("Skipping invalid file %s\n", input_files[file_index]);
+  //             break;
+  //           }
+
+  //           // if this is the first file for this DPU, mark the DPU as used
+  //           if (rank_input[dpu_id].file_count == 0) {
+  //             prepared_dpu_count++;
+  // #ifdef STATISTICS
+  //             total_dpus_launched++;
+  // #endif // STATISTICS
+  //           }
+
+  //           rank_input[dpu_id].file_count++;
+  //           rank_input[dpu_id].total_length += file_length; // if we need alignment, do it here
+  //           prepared_file_count++;
+  // #ifdef STATISTICS
+  //           total_data_processed += file_length;
+  // #endif // STATISTICS
+  //           break;
+  //         }
+  //       }
+
+  //       // did we look at all possible DPUs and not find an empty place?
+  //       if (dpus_searched == dpus_per_rank)
+  //         break;
+  //     }
+
+  // #ifdef STATISTICS
+  //     clock_gettime(CLOCK_MONOTONIC, &stop_load);
+  //     double load_time = TIME_DIFFERENCE(start_load, stop_load);
+  //     printf("[%u] %u of %u MB (%2.2f%%)loaded in %2.2f s\n", dpu_id, rank_input[dpu_id].total_length, TOTAL_MRAM >>
+  //     20,
+  //            (double)rank_input[dpu_id].total_length * 100 / TOTAL_MRAM, load_time);
+  // #endif // STATISTICS
+  //     dbg_printf("Prepared %u files in %u DPUs\n", prepared_file_count, prepared_dpu_count);
+  //     submitted = 0;
+  //     while (!submitted) {
+  //       while (rank_status == ALL_RANKS) {
+  //         int ret = check_for_completed_rank(dpus, &rank_status, ctx, results);
+  //         if (ret == -2) {
+  //           printf("A rank has faulted\n");
+  //           status = PROG_FAULT;
+  //           goto done;
+  //         }
+  //       }
+
+  //       // submit those files to a free rank, and save the files in the host context
+  //       DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
+  //         if (!(rank_status & (1UL << rank_id))) {
+  //           rank_status |= (1UL << rank_id);
+  //           dbg_printf("Submitted to rank %u status=%s\n", rank_id, to_bin(rank_status, rank_count));
+  // #ifdef STATISTICS
+  //           clock_gettime(CLOCK_MONOTONIC, &ctx[rank_id].start_rank);
+  // #endif // STATISTICS
+  //           status = scale_rank(dpu_rank, rank_id, rank_input, prepared_file_count, prepared_dpu_count, opts);
+  //           ctx[rank_id].dpus = rank_input;
+  //           ctx[rank_id].dpu_count = prepared_dpu_count;
+  //           submitted = 1;
+  //           break;
+  //         }
+  //       }
+
+  //       if (!submitted)
+  //         printf("ERROR: failed to submit\n");
+  //     }
+  //   }
+
+  //   // all files have been submitted; wait for all jobs to finish
+  //   dbg_printf("Waiting for all DPUs to finish\n");
+  //   while (rank_status) {
+  //     int ret = check_for_completed_rank(dpus, &rank_status, ctx, results);
+  //     if (ret == -2) {
+  //       status = PROG_FAULT;
+  //       goto done;
+  //     }
+  //     usleep(1);
+  //   }
+
+  //   DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
+  //     DPU_FOREACH(dpu_rank, dpu) { DPU_ASSERT(dpu_log_read(dpu, stdout)); }
+  //   }
 
 done:
   dpu_free(dpus);
@@ -727,13 +763,8 @@ int main(int argc, char **argv) {
 
   if (use_dpu)
     status = dpu_main(&opts, &results);
-  else {
-    for (uint32_t i = 0; i < opts.input_file_count; i++) {
-      printf("File %d: %s\n", i, input_files[i]);
-    }
-
+  else
     status = cpu_main(&opts, &results);
-  }
 
   if (status != PROG_OK) {
     fprintf(stderr, "encountered error %u\n", status);
