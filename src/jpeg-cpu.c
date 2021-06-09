@@ -905,7 +905,12 @@ static void inverse_dct_component(short *buffer) {
  * Function to perform conversion from YCbCr to RGB for the 64 pixels within an MCU
  * https://en.wikipedia.org/wiki/YUV Y'UV444 to RGB888 conversion
  *
- * @param buffer The 3 MCU buffers, each has size of 64
+ * @param buffer The 3 MCU buffers to read from for luminance and write to, each has size of 64
+ * @param cbcr The 3 MCU buffers to read from for Cb and Cr channels
+ * @param max_v Determines whether the vertical halves of CbCr has to be read separately
+ * @param max_h Determines whether the horizontal halves of CbCr has to be read separately
+ * @param v Determines whether to read from second vertical half of CbCr buffer
+ * @param h Determines whether to read from second horizontal half of CbCr buffer
  */
 static void ycbcr_to_rgb_pixel(short buffer[3][64], short cbcr[3][64], int max_v, int max_h, int v, int h) {
   // Iterating from bottom right to top leftbecause otherwise the pixel data will get overwritten
@@ -1004,8 +1009,8 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
         }
       }
 
-      short(*cbcr)[64] = mcus[row * d->mcu_width_real + col].buffer;
       // Convert from YCbCr to RGB
+      short(*cbcr)[64] = mcus[row * d->mcu_width_real + col].buffer;
       for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
         for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
           short(*buffer)[64] = mcus[(row + y) * d->mcu_width_real + (col + x)].buffer;
@@ -1014,18 +1019,6 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
       }
     }
   }
-
-  // for (int i = 10000; i < 10005; i++) {
-  //   for (int j = 0; j < 3; j++) {
-  //     for (int k = 0; k < 64; k++) {
-  //       if (k % 8 == 0) {
-  //         printf("\n");
-  //       }
-  //       printf("%d ", mcus[i].buffer[j][k]);
-  //     }
-  //     printf("\n");
-  //   }
-  // }
 
   return mcus;
 }

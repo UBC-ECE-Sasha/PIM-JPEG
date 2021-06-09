@@ -748,6 +748,66 @@ static void inverse_dct_component(uint32_t mcu_index, uint32_t component_index) 
 }
 
 /**
+ * Function to perform conversion from YCbCr to RGB for the 64 pixels within an MCU
+ * https://en.wikipedia.org/wiki/YUV Y'UV444 to RGB888 conversion
+ *
+ * @param mcu_index The mcu index specifies which mcu block to index into from the MCU_buffer
+ * @param cbcr_index The cbcr index specifies which mcu block to index into from the MCU_buffer for reading CbCr values
+ * @param max_v Determines whether the vertical halves of CbCr has to be read separately
+ * @param max_h Determines whether the horizontal halves of CbCr has to be read separately
+ * @param v Determines whether to read from second vertical half of CbCr buffer
+ * @param h Determines whether to read from second horizontal half of CbCr buffer
+ */
+static void ycbcr_to_rgb_pixel(uint32_t mcu_index, uint32_t cbcr_index, int max_v, int max_h, int v, int h) {
+  // Iterating from bottom right to top leftbecause otherwise the pixel data will get overwritten
+  for (int y = 7; y >= 0; y--) {
+    for (int x = 7; x >= 0; x--) {
+      uint32_t pixel = y * 8 + x;
+      uint32_t cbcr_pixel_row = y / max_v + 4 * v;
+      uint32_t cbcr_pixel_col = x / max_h + 4 * h;
+      uint32_t cbcr_pixel = cbcr_pixel_row * 8 + cbcr_pixel_col;
+
+#if USE_FLOAT
+      // Floating point version, most accurate, but floating point calculations in DPUs are emulated, so very slow
+      short r = MCU_buffer[mcu_index][0][pixel] + 1.402 * MCU_buffer[cbcr_index][2][cbcr_pixel] + 128;
+      short g = MCU_buffer[mcu_index][0][pixel] - 0.344 * MCU_buffer[cbcr_index][1][cbcr_pixel] -
+                0.714 * MCU_buffer[cbcr_index][2][cbcr_pixel] + 128;
+      short b = MCU_buffer[mcu_index][0][pixel] + 1.772 * MCU_buffer[cbcr_index][1][cbcr_pixel] + 128;
+#else
+      // TODO: if multiplication is too slow, use bit shifting. However, bit shifting is less accurate from what I can
+      // see int r = buffer[0][i] + buffer[2][i] + (buffer[2][i] >> 2) + (buffer[2][i] >> 3) + (buffer[2][i] >> 5) +
+      // 128; int g = buffer[0][i] - ((buffer[1][i] >> 2) + (buffer[1][i] >> 4) + (buffer[1][i] >> 5)) -
+      //         ((buffer[2][i] >> 1) + (buffer[2][i] >> 3) + (buffer[2][i] >> 4) + (buffer[2][i] >> 5)) + 128;
+      // int b = buffer[0][i] + buffer[1][i] + (buffer[1][i] >> 1) + (buffer[1][i] >> 2) + (buffer[1][i] >> 6) + 128;
+
+      // Integer only, quite accurate but may be less performant than only using bit shifting
+      short r = MCU_buffer[mcu_index][0][pixel] + ((45 * MCU_buffer[cbcr_index][2][cbcr_pixel]) >> 5) + 128;
+      short g = MCU_buffer[mcu_index][0][pixel] -
+                ((11 * MCU_buffer[cbcr_index][1][cbcr_pixel] + 23 * MCU_buffer[cbcr_index][2][cbcr_pixel]) >> 5) + 128;
+      short b = MCU_buffer[mcu_index][0][pixel] + ((113 * MCU_buffer[cbcr_index][1][cbcr_pixel]) >> 6) + 128;
+#endif
+
+      if (r < 0)
+        r = 0;
+      if (r > 255)
+        r = 255;
+      if (g < 0)
+        g = 0;
+      if (g > 255)
+        g = 255;
+      if (b < 0)
+        b = 0;
+      if (b > 255)
+        b = 255;
+
+      MCU_buffer[mcu_index][0][pixel] = r;
+      MCU_buffer[mcu_index][1][pixel] = g;
+      MCU_buffer[mcu_index][2][pixel] = b;
+    }
+  }
+}
+
+/**
  * Decode the Huffman coded bitstream, compute inverse DCT, and convert from YCbCr to RGB
  *
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
@@ -791,28 +851,16 @@ static void decompress_scanline(JpegDecompressor *d) {
         }
       }
 
-      // int(*cbcr)[64] = mcus[row * d->mcu_width_real + col].buffer;
-      // // Convert from YCbCr to RGB
-      // for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
-      //   for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
-      //     ycbcr_to_rgb_pixel(mcus[(row + y) * d->mcu_width_real + (col + x)].buffer, cbcr, d->max_v_samp_factor,
-      //                        d->max_h_samp_factor, y, x);
-      //   }
-      // }
+      // Convert from YCbCr to RGB
+      uint32_t cbcr_index = row * d->mcu_width_real + col;
+      for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
+        for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
+          uint32_t mcu_index = (row + y) * d->mcu_width_real + (col + x);
+          ycbcr_to_rgb_pixel(mcu_index, cbcr_index, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
+        }
+      }
     }
   }
-
-  // for (int i = 10000; i < 10005; i++) {
-  //   for (int j = 0; j < 3; j++) {
-  //     for (int k = 0; k < 64; k++) {
-  //       if (k % 8 == 0) {
-  //         printf("\n");
-  //       }
-  //       printf("%d ", MCU_buffer[i][j][k]);
-  //     }
-  //     printf("\n");
-  //   }
-  // }
 }
 
 /**
