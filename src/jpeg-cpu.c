@@ -523,17 +523,24 @@ static int get_bits(JpegDecompressor *d, uint32_t num_bits) {
     return temp;
   }
 
-  // TODO: handle restart intervals
   while (d->bits_left < num_bits) {
-    // read a byte and decode it, if it is 0xFF
+    // Read a byte and decode it, if it is 0xFF
     b = read_byte(d);
     c = b;
+
     while (b == 0xFF) {
+      // FF may be padded with FFs, read as many FFs as necessary
       b = read_byte(d);
-      if (b == 0)
+      if (b == 0) {
+        // Got FF which is not a marker, save it to buffer
         c = 0xFF;
-      else
+      } else if (b >= M_RST_FIRST && b <= M_RST_LAST) {
+        // Got restart markers, ignore and read new byte
+        b = read_byte(d);
         c = b;
+      } else {
+        c = b;
+      }
     }
 
     // Add the new bits to the buffer (MSB aligned)
@@ -633,7 +640,7 @@ static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int
     }
 
     if (i + num_zeroes >= 64) {
-      fprintf(stderr, "Error: Invalid AC code - zeros exceeded MCU length");
+      fprintf(stderr, "Error: Invalid AC code - zeros exceeded MCU length %d >= 64\n", i + num_zeroes);
       return -1;
     }
     for (int j = 0; j < num_zeroes; j++) {
@@ -939,21 +946,23 @@ static void ycbcr_to_rgb_pixel(int buffer[3][64], int cbcr[3][64], int max_v, in
       uint32_t cbcr_pixel_col = x / max_h + 4 * h;
       uint32_t cbcr_pixel = cbcr_pixel_row * 8 + cbcr_pixel_col;
 
+#if USE_FLOAT
+      // Floating point version, most accurate, but floating point calculations in DPUs are emulated, so very slow
+      int r = buffer[0][pixel] + 1.402 * cbcr[2][cbcr_pixel] + 128;
+      int g = buffer[0][pixel] - 0.344 * cbcr[1][cbcr_pixel] - 0.714 * cbcr[2][cbcr_pixel] + 128;
+      int b = buffer[0][pixel] + 1.772 * cbcr[1][cbcr_pixel] + 128;
+#else
       // TODO: if multiplication is too slow, use bit shifting. However, bit shifting is less accurate from what I can
       // see int r = buffer[0][i] + buffer[2][i] + (buffer[2][i] >> 2) + (buffer[2][i] >> 3) + (buffer[2][i] >> 5) +
       // 128; int g = buffer[0][i] - ((buffer[1][i] >> 2) + (buffer[1][i] >> 4) + (buffer[1][i] >> 5)) -
       //         ((buffer[2][i] >> 1) + (buffer[2][i] >> 3) + (buffer[2][i] >> 4) + (buffer[2][i] >> 5)) + 128;
       // int b = buffer[0][i] + buffer[1][i] + (buffer[1][i] >> 1) + (buffer[1][i] >> 2) + (buffer[1][i] >> 6) + 128;
 
-      // Floating point version, most accurate, but floating point calculations in DPUs are emulated, so very slow
-      // int r = buffer[0][i] + 1.402 * buffer[2][i] + 128;
-      // int g = buffer[0][i] - 0.344 * buffer[1][i] - 0.714 * buffer[2][i] + 128;
-      // int b = buffer[0][i] + 1.772 * buffer[1][i] + 128;
-
       // Integer only, quite accurate but may be less performant than only using bit shifting
       int r = buffer[0][pixel] + ((45 * cbcr[2][cbcr_pixel]) >> 5) + 128;
       int g = buffer[0][pixel] - ((11 * cbcr[1][cbcr_pixel] + 23 * cbcr[2][cbcr_pixel]) >> 5) + 128;
       int b = buffer[0][pixel] + ((113 * cbcr[1][cbcr_pixel]) >> 6) + 128;
+#endif
 
       if (r < 0)
         r = 0;
@@ -983,10 +992,21 @@ static void ycbcr_to_rgb_pixel(int buffer[3][64], int cbcr[3][64], int max_v, in
 static MCU *decompress_scanline(JpegDecompressor *d) {
   MCU *mcus = (MCU *)malloc((d->mcu_height_real * d->mcu_width_real) * sizeof(MCU));
   int previous_dcs[3] = {0};
+  uint32_t restart_interval = d->restart_interval * d->max_h_samp_factor * d->max_v_samp_factor;
 
   for (uint32_t row = 0; row < d->mcu_height; row += d->max_v_samp_factor) {
     for (uint32_t col = 0; col < d->mcu_width; col += d->max_h_samp_factor) {
-      // TODO: Restart Intervals
+      if (restart_interval != 0 && (row * d->mcu_width_real + col) % restart_interval == 0) {
+        previous_dcs[0] = 0;
+        previous_dcs[1] = 0;
+        previous_dcs[2] = 0;
+
+        uint32_t offset = d->bits_left % 8;
+        if (offset != 0) {
+          d->get_buffer <<= offset;
+          d->bits_left -= offset;
+        }
+      }
 
       for (uint32_t index = 0; index < d->num_color_components; index++) {
         for (uint32_t y = 0; y < d->color_components[index].v_samp_factor; y++) {
@@ -1026,40 +1046,6 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
 
   return mcus;
 }
-
-/**
- * Inverse Discrete Cosine Transform and YCbCr conversion to RGB
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- * @param mcus MCU struct that holds all decoded mcus
- */
-// static void inverse_dct(JpegDecompressor *d, MCU *mcus) {
-//   for (uint32_t row = 0; row < d->mcu_height; row += d->max_v_samp_factor) {
-//     for (uint32_t col = 0; col < d->mcu_width; col += d->max_h_samp_factor) {
-//       // Perform inverse DCT on each MCU
-//       for (uint32_t index = 0; index < d->num_color_components; index++) {
-//         for (uint32_t y = 0; y < d->color_components[index].v_samp_factor; y++) {
-//           for (uint32_t x = 0; x < d->color_components[index].h_samp_factor; x++) {
-//             // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
-//             // + (current col + horizontal sampling)
-// #if USE_FLOAT
-//             inverse_dct_component_float(mcus[(row + y) * d->mcu_width_real + (col + x)].buffer[index]);
-// #else
-//             inverse_dct_component(mcus[(row + y) * d->mcu_width_real + (col + x)].buffer[index]);
-// #endif
-//           }
-//         }
-//       }
-
-//       // Perform conversion of YCbCr to RGB
-//       for (uint32_t y = 0; y < d->max_v_samp_factor; y++) {
-//         for (uint32_t x = 0; x < d->max_h_samp_factor; x++) {
-//           ycbcr_to_rgb_pixel(mcus[(row + y) * d->mcu_width_real + (col + x)].buffer);
-//         }
-//       }
-//     }
-//   }
-// }
 
 /**
  * Read JPEG markers

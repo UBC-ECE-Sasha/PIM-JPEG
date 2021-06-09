@@ -437,6 +437,54 @@ static void process_SOS(JpegDecompressor *d) {
 }
 
 /**
+ * Decode the Huffman coded bitstream, compute inverse DCT, and convert from YCbCr to RGB
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
+ */
+static MCU *decompress_scanline(JpegDecompressor *d) {
+  MCU *mcus = (MCU *)malloc((d->mcu_height_real * d->mcu_width_real) * sizeof(MCU));
+  int previous_dcs[3] = {0};
+
+  for (uint32_t row = 0; row < d->mcu_height; row += d->max_v_samp_factor) {
+    for (uint32_t col = 0; col < d->mcu_width; col += d->max_h_samp_factor) {
+      // TODO: Restart Intervals
+
+      for (uint32_t index = 0; index < d->num_color_components; index++) {
+        for (uint32_t y = 0; y < d->color_components[index].v_samp_factor; y++) {
+          for (uint32_t x = 0; x < d->color_components[index].h_samp_factor; x++) {
+            // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
+            // + (current col + horizontal sampling)
+            int *buffer = mcus[(row + y) * d->mcu_width_real + (col + x)].buffer[index];
+
+            // Decode Huffman coded bitstream
+            if (decode_mcu(d, index, buffer, &previous_dcs[index]) != 0) {
+              d->valid = 0;
+              printf("Error: Invalid MCU\n");
+              free(mcus);
+              return NULL;
+            }
+
+            // Compute inverse DCT with ANN algorithm
+            // inverse_dct_component(buffer);
+          }
+        }
+      }
+
+      // int(*cbcr)[64] = mcus[row * d->mcu_width_real + col].buffer;
+      // // Convert from YCbCr to RGB
+      // for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
+      //   for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
+      //     ycbcr_to_rgb_pixel(mcus[(row + y) * d->mcu_width_real + (col + x)].buffer, cbcr, d->max_v_samp_factor,
+      //                        d->max_h_samp_factor, y, x);
+      //   }
+      // }
+    }
+  }
+
+  return mcus;
+}
+
+/**
  * Read JPEG markers
  * Return 0 when the SOS marker is found
  * Otherwise return 1 for failure
