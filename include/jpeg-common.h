@@ -159,7 +159,7 @@ typedef struct JpegDecompressor {
  * MCU has a 2D array. 3 indices for color channels (RGB) and 64 indices the 64 values in an 8x8 MCU
  */
 typedef struct MCU {
-  int buffer[3][64];
+  short buffer[3][64];
 } MCU;
 
 void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer);

@@ -432,7 +432,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     uint32_t copy_length = file_length + (8 - file_length % 8);
 
     DPU_ASSERT(dpu_copy_to(dpus, "input", 0, &dpu_input, 8));
-    DPU_ASSERT(dpu_copy_to(dpus, "buffer", 0, buffer, copy_length));
+    DPU_ASSERT(dpu_copy_to(dpus, "file_buffer", 0, buffer, copy_length));
 
     DPU_ASSERT(dpu_launch(dpus, DPU_SYNCHRONOUS));
 

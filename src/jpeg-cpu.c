@@ -479,36 +479,6 @@ static void process_SOS(JpegDecompressor *d) {
   build_huffman_tables(d);
 }
 
-// static void reset_decoder(JpegDecompressor *d) {
-//   d->restarts_left = d->restart_interval;
-//   d->get_buffer = 0;
-//   d->bits_left = 0;
-// }
-
-// int process_restart(JpegDecompressor *d) {
-//   int marker = next_marker(d);
-//   switch (marker) {
-//     case -1:
-//       printf("Error: EOF while looking for RST\n");
-//       return -1;
-
-//     case M_EOI:
-//       printf("EOI after %u restarts\n", d->num_restart_intervals);
-//       return -1;
-
-//     case M_RST_FIRST ... M_RST_LAST:
-//       d->num_restart_intervals++;
-//       reset_decoder(d);
-//       printf("Found restart %u (%u)\n", marker - M_RST_FIRST, d->num_restart_intervals);
-//       return 0;
-
-//     default:
-//       printf("Found unexpected marker 0x%x\n", marker);
-//   }
-
-//   return -1;
-// }
-
 /**
  * Get the number of specified bits from Huffman coded bitstream
  *
@@ -586,7 +556,7 @@ static uint8_t huff_decode(JpegDecompressor *d, HuffmanTable *h_table) {
  * @param buffer The MCU buffer, has size of 64
  * @param previous_dc The value of the previous DC coefficient, needed to calculate value of current DC coefficient
  */
-static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int *previous_dc) {
+static int decode_mcu(JpegDecompressor *d, int component_index, short *buffer, short *previous_dc) {
   QuantizationTable *q_table = &d->quant_tables[d->color_components[component_index].quant_table_id];
   HuffmanTable *dc_table = &d->dc_huffman_tables[d->color_components[component_index].dc_huffman_table_id];
   HuffmanTable *ac_table = &d->ac_huffman_tables[d->color_components[component_index].ac_huffman_table_id];
@@ -672,7 +642,7 @@ static int decode_mcu(JpegDecompressor *d, int component_index, int *buffer, int
  *
  * @param buffer The MCU buffer, has size of 64
  */
-static void inverse_dct_component_float(int *buffer) {
+static void inverse_dct_component_float(short *buffer) {
   // ANN algorithm
   for (int i = 0; i < 8; i++) {
     float g0 = buffer[0 * 8 + i] * S0;
@@ -784,7 +754,7 @@ static void inverse_dct_component_float(int *buffer) {
  *
  * @param buffer The MCU buffer, has size of 64
  */
-static void inverse_dct_component(int *buffer) {
+static void inverse_dct_component(short *buffer) {
   // ANN algorithm, intermediate values are bit shifted to the left to preserve precision
   // and then bit shifted to the right at the end
   for (int i = 0; i < 8; i++) {
@@ -799,14 +769,14 @@ static void inverse_dct_component(int *buffer) {
     int g7 = (buffer[3 * 8 + i] * 213) >> 5;
 
     // Lower accuracy
-    // int g0 = (component[0 * 8 + i] * 22) >> 2;
-    // int g1 = (component[4 * 8 + i] * 22) >> 2;
-    // int g2 = (component[2 * 8 + i] * 30) >> 2;
-    // int g3 = (component[6 * 8 + i] * 12) >> 2;
-    // int g4 = (component[5 * 8 + i] * 18) >> 2;
-    // int g5 = (component[1 * 8 + i] * 31) >> 2;
-    // int g6 = (component[7 * 8 + i] * 6) >> 2;
-    // int g7 = (component[3 * 8 + i] * 27) >> 2;
+    // int g0 = (buffer[0 * 8 + i] * 22) >> 2;
+    // int g1 = (buffer[4 * 8 + i] * 22) >> 2;
+    // int g2 = (buffer[2 * 8 + i] * 30) >> 2;
+    // int g3 = (buffer[6 * 8 + i] * 12) >> 2;
+    // int g4 = (buffer[5 * 8 + i] * 18) >> 2;
+    // int g5 = (buffer[1 * 8 + i] * 31) >> 2;
+    // int g6 = (buffer[7 * 8 + i] * 6) >> 2;
+    // int g7 = (buffer[3 * 8 + i] * 27) >> 2;
 
     int f4 = g4 - g7;
     int f5 = g5 + g6;
@@ -870,14 +840,14 @@ static void inverse_dct_component(int *buffer) {
     int g7 = (buffer[i * 8 + 3] * 213) >> 5;
 
     // Lower accuracy
-    // int g0 = (component[i * 8 + 0] * 22) >> 2;
-    // int g1 = (component[i * 8 + 4] * 22) >> 2;
-    // int g2 = (component[i * 8 + 2] * 30) >> 2;
-    // int g3 = (component[i * 8 + 6] * 12) >> 2;
-    // int g4 = (component[i * 8 + 5] * 18) >> 2;
-    // int g5 = (component[i * 8 + 1] * 31) >> 2;
-    // int g6 = (component[i * 8 + 7] * 6) >> 2;
-    // int g7 = (component[i * 8 + 3] * 27) >> 2;
+    // int g0 = (buffer[i * 8 + 0] * 22) >> 2;
+    // int g1 = (buffer[i * 8 + 4] * 22) >> 2;
+    // int g2 = (buffer[i * 8 + 2] * 30) >> 2;
+    // int g3 = (buffer[i * 8 + 6] * 12) >> 2;
+    // int g4 = (buffer[i * 8 + 5] * 18) >> 2;
+    // int g5 = (buffer[i * 8 + 1] * 31) >> 2;
+    // int g6 = (buffer[i * 8 + 7] * 6) >> 2;
+    // int g7 = (buffer[i * 8 + 3] * 27) >> 2;
 
     int f4 = g4 - g7;
     int f5 = g5 + g6;
@@ -937,7 +907,7 @@ static void inverse_dct_component(int *buffer) {
  *
  * @param buffer The 3 MCU buffers, each has size of 64
  */
-static void ycbcr_to_rgb_pixel(int buffer[3][64], int cbcr[3][64], int max_v, int max_h, int v, int h) {
+static void ycbcr_to_rgb_pixel(short buffer[3][64], short cbcr[3][64], int max_v, int max_h, int v, int h) {
   // Iterating from bottom right to top leftbecause otherwise the pixel data will get overwritten
   for (int y = 7; y >= 0; y--) {
     for (int x = 7; x >= 0; x--) {
@@ -948,9 +918,9 @@ static void ycbcr_to_rgb_pixel(int buffer[3][64], int cbcr[3][64], int max_v, in
 
 #if USE_FLOAT
       // Floating point version, most accurate, but floating point calculations in DPUs are emulated, so very slow
-      int r = buffer[0][pixel] + 1.402 * cbcr[2][cbcr_pixel] + 128;
-      int g = buffer[0][pixel] - 0.344 * cbcr[1][cbcr_pixel] - 0.714 * cbcr[2][cbcr_pixel] + 128;
-      int b = buffer[0][pixel] + 1.772 * cbcr[1][cbcr_pixel] + 128;
+      short r = buffer[0][pixel] + 1.402 * cbcr[2][cbcr_pixel] + 128;
+      short g = buffer[0][pixel] - 0.344 * cbcr[1][cbcr_pixel] - 0.714 * cbcr[2][cbcr_pixel] + 128;
+      short b = buffer[0][pixel] + 1.772 * cbcr[1][cbcr_pixel] + 128;
 #else
       // TODO: if multiplication is too slow, use bit shifting. However, bit shifting is less accurate from what I can
       // see int r = buffer[0][i] + buffer[2][i] + (buffer[2][i] >> 2) + (buffer[2][i] >> 3) + (buffer[2][i] >> 5) +
@@ -959,9 +929,9 @@ static void ycbcr_to_rgb_pixel(int buffer[3][64], int cbcr[3][64], int max_v, in
       // int b = buffer[0][i] + buffer[1][i] + (buffer[1][i] >> 1) + (buffer[1][i] >> 2) + (buffer[1][i] >> 6) + 128;
 
       // Integer only, quite accurate but may be less performant than only using bit shifting
-      int r = buffer[0][pixel] + ((45 * cbcr[2][cbcr_pixel]) >> 5) + 128;
-      int g = buffer[0][pixel] - ((11 * cbcr[1][cbcr_pixel] + 23 * cbcr[2][cbcr_pixel]) >> 5) + 128;
-      int b = buffer[0][pixel] + ((113 * cbcr[1][cbcr_pixel]) >> 6) + 128;
+      short r = buffer[0][pixel] + ((45 * cbcr[2][cbcr_pixel]) >> 5) + 128;
+      short g = buffer[0][pixel] - ((11 * cbcr[1][cbcr_pixel] + 23 * cbcr[2][cbcr_pixel]) >> 5) + 128;
+      short b = buffer[0][pixel] + ((113 * cbcr[1][cbcr_pixel]) >> 6) + 128;
 #endif
 
       if (r < 0)
@@ -991,7 +961,7 @@ static void ycbcr_to_rgb_pixel(int buffer[3][64], int cbcr[3][64], int max_v, in
  */
 static MCU *decompress_scanline(JpegDecompressor *d) {
   MCU *mcus = (MCU *)malloc((d->mcu_height_real * d->mcu_width_real) * sizeof(MCU));
-  int previous_dcs[3] = {0};
+  short previous_dcs[3] = {0};
   uint32_t restart_interval = d->restart_interval * d->max_h_samp_factor * d->max_v_samp_factor;
 
   for (uint32_t row = 0; row < d->mcu_height; row += d->max_v_samp_factor) {
@@ -1001,6 +971,7 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
         previous_dcs[1] = 0;
         previous_dcs[2] = 0;
 
+        // Align get buffer to next byte
         uint32_t offset = d->bits_left % 8;
         if (offset != 0) {
           d->get_buffer <<= offset;
@@ -1013,7 +984,7 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
           for (uint32_t x = 0; x < d->color_components[index].h_samp_factor; x++) {
             // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
             // + (current col + horizontal sampling)
-            int *buffer = mcus[(row + y) * d->mcu_width_real + (col + x)].buffer[index];
+            short *buffer = mcus[(row + y) * d->mcu_width_real + (col + x)].buffer[index];
 
             // Decode Huffman coded bitstream
             if (decode_mcu(d, index, buffer, &previous_dcs[index]) != 0) {
@@ -1033,16 +1004,28 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
         }
       }
 
-      int(*cbcr)[64] = mcus[row * d->mcu_width_real + col].buffer;
+      short(*cbcr)[64] = mcus[row * d->mcu_width_real + col].buffer;
       // Convert from YCbCr to RGB
       for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
         for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
-          ycbcr_to_rgb_pixel(mcus[(row + y) * d->mcu_width_real + (col + x)].buffer, cbcr, d->max_v_samp_factor,
-                             d->max_h_samp_factor, y, x);
+          short(*buffer)[64] = mcus[(row + y) * d->mcu_width_real + (col + x)].buffer;
+          ycbcr_to_rgb_pixel(buffer, cbcr, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
         }
       }
     }
   }
+
+  // for (int i = 10000; i < 10005; i++) {
+  //   for (int j = 0; j < 3; j++) {
+  //     for (int k = 0; k < 64; k++) {
+  //       if (k % 8 == 0) {
+  //         printf("\n");
+  //       }
+  //       printf("%d ", mcus[i].buffer[j][k]);
+  //     }
+  //     printf("\n");
+  //   }
+  // }
 
   return mcus;
 }
