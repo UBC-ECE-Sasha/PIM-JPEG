@@ -13,6 +13,7 @@
 #include <time.h>
 
 // #include "PIM-common/host/include/host.h"
+#include "bmp.h"
 #include "host.h"
 #include "jpeg-common.h"
 #include "jpeg-host.h"
@@ -409,6 +410,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
 
   // TODO: Remove later
   char *buffer = malloc(MAX_INPUT_LENGTH);
+  short *MCU_buffer = malloc(sizeof(short) * 87380 * 3 * 64);
   for (; file_index < opts->input_file_count; file_index++) {
     struct stat st;
     char *filename = input_files[file_index];
@@ -436,7 +438,53 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
 
     DPU_ASSERT(dpu_launch(dpus, DPU_SYNCHRONOUS));
 
-    DPU_FOREACH(dpus, dpu) { DPU_ASSERT(dpu_log_read(dpu, stdout)); }
+    DPU_FOREACH(dpus, dpu) {
+      DPU_ASSERT(dpu_log_read(dpu, stdout));
+      printf("\n");
+    }
+
+    dpu_output_t dpu_output;
+    DPU_FOREACH(dpus, dpu) {
+      DPU_ASSERT(dpu_copy_from(dpu, "output", 0, &dpu_output, sizeof(dpu_output_t)));
+      DPU_ASSERT(dpu_copy_from(dpu, "MCU_buffer", 0, MCU_buffer,
+                               sizeof(short) * dpu_output.image_height * dpu_output.image_width * 3));
+    }
+    printf("Image dimensions: %d x %d\n", dpu_output.image_width, dpu_output.image_height);
+    printf("Image padding: %d\n", dpu_output.padding);
+    printf("MCU width real: %d\n", dpu_output.mcu_width_real);
+
+    // Now write the decoded data out as BMP
+    BmpObject image;
+    uint8_t *ptr;
+
+    image.win_header.width = dpu_output.image_width;
+    image.win_header.height = dpu_output.image_height;
+    ptr = (uint8_t *)malloc(dpu_output.image_height * (dpu_output.image_width * 3 + dpu_output.padding));
+    image.data = ptr;
+
+    for (int y = dpu_output.image_height - 1; y >= 0; y--) {
+      uint32_t mcu_row = y / 8;
+      uint32_t pixel_row = y % 8;
+
+      for (int x = 0; x < dpu_output.image_width; x++) {
+        uint32_t mcu_column = x / 8;
+        uint32_t pixel_column = x % 8;
+        uint32_t mcu_index = mcu_row * dpu_output.mcu_width_real + mcu_column;
+        uint32_t pixel_index = pixel_row * 8 + pixel_column;
+        ptr[0] = MCU_buffer[(mcu_index * 3 + 2) * 64 + pixel_index];
+        ptr[1] = MCU_buffer[(mcu_index * 3 + 1) * 64 + pixel_index];
+        ptr[2] = MCU_buffer[(mcu_index * 3 + 0) * 64 + pixel_index];
+        ptr += 3;
+      }
+
+      for (uint32_t i = 0; i < dpu_output.padding; i++) {
+        ptr[0] = 0;
+        ptr++;
+      }
+    }
+
+    write_bmp("output.bmp", &image);
+    free(image.data);
   }
   free(buffer);
 

@@ -6,10 +6,12 @@
 #include "jpeg-host.h"
 
 __host dpu_input_t input;
+__host dpu_output_t output;
 // TODO: implicit MRAM access currently, change to explicit once logic is finished
 __mram_noinit char file_buffer[16 << 20];
 // About 32MB
-__mram_noinit short MCU_buffer[87380][3][64];
+// __mram_noinit short MCU_buffer[87380][3][64];
+__mram_noinit short MCU_buffer[87380 * 3 * 64];
 
 /**
  * Helper array for filling in quantization table in zigzag order
@@ -536,10 +538,10 @@ static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t componen
     // Convert to negative coefficient
     coeff -= (1 << dc_length) - 1;
   }
-  MCU_buffer[mcu_index][component_index][0] = coeff + *previous_dc;
-  *previous_dc = MCU_buffer[mcu_index][component_index][0];
+  MCU_buffer[mcu_index] = coeff + *previous_dc;
+  *previous_dc = MCU_buffer[mcu_index];
   // Dequantization
-  MCU_buffer[mcu_index][component_index][0] *= q_table->table[0];
+  MCU_buffer[mcu_index] *= q_table->table[0];
 
   // Get the AC values for this MCU block
   int i = 1;
@@ -553,7 +555,7 @@ static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t componen
     // Got 0x00, fill remaining MCU block with 0s
     if (ac_length == 0x00) {
       while (i < 64) {
-        MCU_buffer[mcu_index][component_index][ZIGZAG_ORDER[i++]] = 0;
+        MCU_buffer[mcu_index + ZIGZAG_ORDER[i++]] = 0;
       }
       break;
     }
@@ -573,7 +575,7 @@ static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t componen
       return -1;
     }
     for (int j = 0; j < num_zeroes; j++) {
-      MCU_buffer[mcu_index][component_index][ZIGZAG_ORDER[i++]] = 0;
+      MCU_buffer[mcu_index + ZIGZAG_ORDER[i++]] = 0;
     }
 
     if (coeff_length > 10) {
@@ -587,7 +589,7 @@ static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t componen
         coeff -= (1 << coeff_length) - 1;
       }
       // Write coefficient to buffer as well as perform dequantization
-      MCU_buffer[mcu_index][component_index][ZIGZAG_ORDER[i]] = coeff * q_table->table[ZIGZAG_ORDER[i]];
+      MCU_buffer[mcu_index + ZIGZAG_ORDER[i]] = coeff * q_table->table[ZIGZAG_ORDER[i]];
       i++;
     }
   }
@@ -599,31 +601,30 @@ static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t componen
  * Function to perform inverse DCT for one of the color components of an MCU using integers only
  *
  * @param mcu_index The mcu index specifies which mcu block to index into from the MCU_buffer
- * @param component_index The component index specifies which color channel to use (Y, Cb, Cr)
  */
-static void inverse_dct_component(uint32_t mcu_index, uint32_t component_index) {
+static void inverse_dct_component(uint32_t mcu_index) {
   // ANN algorithm, intermediate values are bit shifted to the left to preserve precision
   // and then bit shifted to the right at the end
   for (int i = 0; i < 8; i++) {
     // Higher accuracy
-    int g0 = (MCU_buffer[mcu_index][component_index][0 * 8 + i] * 181) >> 5;
-    int g1 = (MCU_buffer[mcu_index][component_index][4 * 8 + i] * 181) >> 5;
-    int g2 = (MCU_buffer[mcu_index][component_index][2 * 8 + i] * 59) >> 3;
-    int g3 = (MCU_buffer[mcu_index][component_index][6 * 8 + i] * 49) >> 4;
-    int g4 = (MCU_buffer[mcu_index][component_index][5 * 8 + i] * 71) >> 4;
-    int g5 = (MCU_buffer[mcu_index][component_index][1 * 8 + i] * 251) >> 5;
-    int g6 = (MCU_buffer[mcu_index][component_index][7 * 8 + i] * 25) >> 4;
-    int g7 = (MCU_buffer[mcu_index][component_index][3 * 8 + i] * 213) >> 5;
+    int g0 = (MCU_buffer[mcu_index + 0 * 8 + i] * 181) >> 5;
+    int g1 = (MCU_buffer[mcu_index + 4 * 8 + i] * 181) >> 5;
+    int g2 = (MCU_buffer[mcu_index + 2 * 8 + i] * 59) >> 3;
+    int g3 = (MCU_buffer[mcu_index + 6 * 8 + i] * 49) >> 4;
+    int g4 = (MCU_buffer[mcu_index + 5 * 8 + i] * 71) >> 4;
+    int g5 = (MCU_buffer[mcu_index + 1 * 8 + i] * 251) >> 5;
+    int g6 = (MCU_buffer[mcu_index + 7 * 8 + i] * 25) >> 4;
+    int g7 = (MCU_buffer[mcu_index + 3 * 8 + i] * 213) >> 5;
 
     // Lower accuracy
-    // int g0 = (MCU_buffer[mcu_index][component_index][0 * 8 + i] * 22) >> 2;
-    // int g1 = (MCU_buffer[mcu_index][component_index][4 * 8 + i] * 22) >> 2;
-    // int g2 = (MCU_buffer[mcu_index][component_index][2 * 8 + i] * 30) >> 2;
-    // int g3 = (MCU_buffer[mcu_index][component_index][6 * 8 + i] * 12) >> 2;
-    // int g4 = (MCU_buffer[mcu_index][component_index][5 * 8 + i] * 18) >> 2;
-    // int g5 = (MCU_buffer[mcu_index][component_index][1 * 8 + i] * 31) >> 2;
-    // int g6 = (MCU_buffer[mcu_index][component_index][7 * 8 + i] * 6) >> 2;
-    // int g7 = (MCU_buffer[mcu_index][component_index][3 * 8 + i] * 27) >> 2;
+    // int g0 = (MCU_buffer[mcu_index + 0 * 8 + i] * 22) >> 2;
+    // int g1 = (MCU_buffer[mcu_index + 4 * 8 + i] * 22) >> 2;
+    // int g2 = (MCU_buffer[mcu_index + 2 * 8 + i] * 30) >> 2;
+    // int g3 = (MCU_buffer[mcu_index + 6 * 8 + i] * 12) >> 2;
+    // int g4 = (MCU_buffer[mcu_index + 5 * 8 + i] * 18) >> 2;
+    // int g5 = (MCU_buffer[mcu_index + 1 * 8 + i] * 31) >> 2;
+    // int g6 = (MCU_buffer[mcu_index + 7 * 8 + i] * 6) >> 2;
+    // int g7 = (MCU_buffer[mcu_index + 3 * 8 + i] * 27) >> 2;
 
     int f4 = g4 - g7;
     int f5 = g5 + g6;
@@ -665,36 +666,36 @@ static void inverse_dct_component(uint32_t mcu_index, uint32_t component_index) 
     int b4 = c4 - c8;
     int b6 = c6 - e7;
 
-    MCU_buffer[mcu_index][component_index][0 * 8 + i] = (b0 + e7) >> 4;
-    MCU_buffer[mcu_index][component_index][1 * 8 + i] = (b1 + b6) >> 4;
-    MCU_buffer[mcu_index][component_index][2 * 8 + i] = (b2 + c8) >> 4;
-    MCU_buffer[mcu_index][component_index][3 * 8 + i] = (b3 + b4) >> 4;
-    MCU_buffer[mcu_index][component_index][4 * 8 + i] = (b3 - b4) >> 4;
-    MCU_buffer[mcu_index][component_index][5 * 8 + i] = (b2 - c8) >> 4;
-    MCU_buffer[mcu_index][component_index][6 * 8 + i] = (b1 - b6) >> 4;
-    MCU_buffer[mcu_index][component_index][7 * 8 + i] = (b0 - e7) >> 4;
+    MCU_buffer[mcu_index + 0 * 8 + i] = (b0 + e7) >> 4;
+    MCU_buffer[mcu_index + 1 * 8 + i] = (b1 + b6) >> 4;
+    MCU_buffer[mcu_index + 2 * 8 + i] = (b2 + c8) >> 4;
+    MCU_buffer[mcu_index + 3 * 8 + i] = (b3 + b4) >> 4;
+    MCU_buffer[mcu_index + 4 * 8 + i] = (b3 - b4) >> 4;
+    MCU_buffer[mcu_index + 5 * 8 + i] = (b2 - c8) >> 4;
+    MCU_buffer[mcu_index + 6 * 8 + i] = (b1 - b6) >> 4;
+    MCU_buffer[mcu_index + 7 * 8 + i] = (b0 - e7) >> 4;
   }
 
   for (int i = 0; i < 8; i++) {
     // Higher accuracy
-    int g0 = (MCU_buffer[mcu_index][component_index][i * 8 + 0] * 181) >> 5;
-    int g1 = (MCU_buffer[mcu_index][component_index][i * 8 + 4] * 181) >> 5;
-    int g2 = (MCU_buffer[mcu_index][component_index][i * 8 + 2] * 59) >> 3;
-    int g3 = (MCU_buffer[mcu_index][component_index][i * 8 + 6] * 49) >> 4;
-    int g4 = (MCU_buffer[mcu_index][component_index][i * 8 + 5] * 71) >> 4;
-    int g5 = (MCU_buffer[mcu_index][component_index][i * 8 + 1] * 251) >> 5;
-    int g6 = (MCU_buffer[mcu_index][component_index][i * 8 + 7] * 25) >> 4;
-    int g7 = (MCU_buffer[mcu_index][component_index][i * 8 + 3] * 213) >> 5;
+    int g0 = (MCU_buffer[mcu_index + i * 8 + 0] * 181) >> 5;
+    int g1 = (MCU_buffer[mcu_index + i * 8 + 4] * 181) >> 5;
+    int g2 = (MCU_buffer[mcu_index + i * 8 + 2] * 59) >> 3;
+    int g3 = (MCU_buffer[mcu_index + i * 8 + 6] * 49) >> 4;
+    int g4 = (MCU_buffer[mcu_index + i * 8 + 5] * 71) >> 4;
+    int g5 = (MCU_buffer[mcu_index + i * 8 + 1] * 251) >> 5;
+    int g6 = (MCU_buffer[mcu_index + i * 8 + 7] * 25) >> 4;
+    int g7 = (MCU_buffer[mcu_index + i * 8 + 3] * 213) >> 5;
 
     // Lower accuracy
-    // int g0 = (MCU_buffer[mcu_index][component_index][i * 8 + 0] * 22) >> 2;
-    // int g1 = (MCU_buffer[mcu_index][component_index][i * 8 + 4] * 22) >> 2;
-    // int g2 = (MCU_buffer[mcu_index][component_index][i * 8 + 2] * 30) >> 2;
-    // int g3 = (MCU_buffer[mcu_index][component_index][i * 8 + 6] * 12) >> 2;
-    // int g4 = (MCU_buffer[mcu_index][component_index][i * 8 + 5] * 18) >> 2;
-    // int g5 = (MCU_buffer[mcu_index][component_index][i * 8 + 1] * 31) >> 2;
-    // int g6 = (MCU_buffer[mcu_index][component_index][i * 8 + 7] * 6) >> 2;
-    // int g7 = (MCU_buffer[mcu_index][component_index][i * 8 + 3] * 27) >> 2;
+    // int g0 = (MCU_buffer[mcu_index + i * 8 + 0] * 22) >> 2;
+    // int g1 = (MCU_buffer[mcu_index + i * 8 + 4] * 22) >> 2;
+    // int g2 = (MCU_buffer[mcu_index + i * 8 + 2] * 30) >> 2;
+    // int g3 = (MCU_buffer[mcu_index + i * 8 + 6] * 12) >> 2;
+    // int g4 = (MCU_buffer[mcu_index + i * 8 + 5] * 18) >> 2;
+    // int g5 = (MCU_buffer[mcu_index + i * 8 + 1] * 31) >> 2;
+    // int g6 = (MCU_buffer[mcu_index + i * 8 + 7] * 6) >> 2;
+    // int g7 = (MCU_buffer[mcu_index + i * 8 + 3] * 27) >> 2;
 
     int f4 = g4 - g7;
     int f5 = g5 + g6;
@@ -736,14 +737,14 @@ static void inverse_dct_component(uint32_t mcu_index, uint32_t component_index) 
     int b4 = c4 - c8;
     int b6 = c6 - e7;
 
-    MCU_buffer[mcu_index][component_index][i * 8 + 0] = (b0 + e7) >> 4;
-    MCU_buffer[mcu_index][component_index][i * 8 + 1] = (b1 + b6) >> 4;
-    MCU_buffer[mcu_index][component_index][i * 8 + 2] = (b2 + c8) >> 4;
-    MCU_buffer[mcu_index][component_index][i * 8 + 3] = (b3 + b4) >> 4;
-    MCU_buffer[mcu_index][component_index][i * 8 + 4] = (b3 - b4) >> 4;
-    MCU_buffer[mcu_index][component_index][i * 8 + 5] = (b2 - c8) >> 4;
-    MCU_buffer[mcu_index][component_index][i * 8 + 6] = (b1 - b6) >> 4;
-    MCU_buffer[mcu_index][component_index][i * 8 + 7] = (b0 - e7) >> 4;
+    MCU_buffer[mcu_index + i * 8 + 0] = (b0 + e7) >> 4;
+    MCU_buffer[mcu_index + i * 8 + 1] = (b1 + b6) >> 4;
+    MCU_buffer[mcu_index + i * 8 + 2] = (b2 + c8) >> 4;
+    MCU_buffer[mcu_index + i * 8 + 3] = (b3 + b4) >> 4;
+    MCU_buffer[mcu_index + i * 8 + 4] = (b3 - b4) >> 4;
+    MCU_buffer[mcu_index + i * 8 + 5] = (b2 - c8) >> 4;
+    MCU_buffer[mcu_index + i * 8 + 6] = (b1 - b6) >> 4;
+    MCU_buffer[mcu_index + i * 8 + 7] = (b0 - e7) >> 4;
   }
 }
 
@@ -762,18 +763,11 @@ static void ycbcr_to_rgb_pixel(uint32_t mcu_index, uint32_t cbcr_index, int max_
   // Iterating from bottom right to top leftbecause otherwise the pixel data will get overwritten
   for (int y = 7; y >= 0; y--) {
     for (int x = 7; x >= 0; x--) {
-      uint32_t pixel = y * 8 + x;
+      uint32_t pixel = mcu_index + y * 8 + x;
       uint32_t cbcr_pixel_row = y / max_v + 4 * v;
       uint32_t cbcr_pixel_col = x / max_h + 4 * h;
-      uint32_t cbcr_pixel = cbcr_pixel_row * 8 + cbcr_pixel_col;
+      uint32_t cbcr_pixel = cbcr_index + cbcr_pixel_row * 8 + cbcr_pixel_col + 64;
 
-#if USE_FLOAT
-      // Floating point version, most accurate, but floating point calculations in DPUs are emulated, so very slow
-      short r = MCU_buffer[mcu_index][0][pixel] + 1.402 * MCU_buffer[cbcr_index][2][cbcr_pixel] + 128;
-      short g = MCU_buffer[mcu_index][0][pixel] - 0.344 * MCU_buffer[cbcr_index][1][cbcr_pixel] -
-                0.714 * MCU_buffer[cbcr_index][2][cbcr_pixel] + 128;
-      short b = MCU_buffer[mcu_index][0][pixel] + 1.772 * MCU_buffer[cbcr_index][1][cbcr_pixel] + 128;
-#else
       // TODO: if multiplication is too slow, use bit shifting. However, bit shifting is less accurate from what I can
       // see int r = buffer[0][i] + buffer[2][i] + (buffer[2][i] >> 2) + (buffer[2][i] >> 3) + (buffer[2][i] >> 5) +
       // 128; int g = buffer[0][i] - ((buffer[1][i] >> 2) + (buffer[1][i] >> 4) + (buffer[1][i] >> 5)) -
@@ -781,11 +775,9 @@ static void ycbcr_to_rgb_pixel(uint32_t mcu_index, uint32_t cbcr_index, int max_
       // int b = buffer[0][i] + buffer[1][i] + (buffer[1][i] >> 1) + (buffer[1][i] >> 2) + (buffer[1][i] >> 6) + 128;
 
       // Integer only, quite accurate but may be less performant than only using bit shifting
-      short r = MCU_buffer[mcu_index][0][pixel] + ((45 * MCU_buffer[cbcr_index][2][cbcr_pixel]) >> 5) + 128;
-      short g = MCU_buffer[mcu_index][0][pixel] -
-                ((11 * MCU_buffer[cbcr_index][1][cbcr_pixel] + 23 * MCU_buffer[cbcr_index][2][cbcr_pixel]) >> 5) + 128;
-      short b = MCU_buffer[mcu_index][0][pixel] + ((113 * MCU_buffer[cbcr_index][1][cbcr_pixel]) >> 6) + 128;
-#endif
+      short r = MCU_buffer[pixel] + ((45 * MCU_buffer[64 + cbcr_pixel]) >> 5) + 128;
+      short g = MCU_buffer[pixel] - ((11 * MCU_buffer[cbcr_pixel] + 23 * MCU_buffer[64 + cbcr_pixel]) >> 5) + 128;
+      short b = MCU_buffer[pixel] + ((113 * MCU_buffer[cbcr_pixel]) >> 6) + 128;
 
       if (r < 0)
         r = 0;
@@ -800,9 +792,9 @@ static void ycbcr_to_rgb_pixel(uint32_t mcu_index, uint32_t cbcr_index, int max_
       if (b > 255)
         b = 255;
 
-      MCU_buffer[mcu_index][0][pixel] = r;
-      MCU_buffer[mcu_index][1][pixel] = g;
-      MCU_buffer[mcu_index][2][pixel] = b;
+      MCU_buffer[pixel] = r;
+      MCU_buffer[64 + pixel] = g;
+      MCU_buffer[128 + pixel] = b;
     }
   }
 }
@@ -816,51 +808,81 @@ static void decompress_scanline(JpegDecompressor *d) {
   short previous_dcs[3] = {0};
   uint32_t restart_interval = d->restart_interval * d->max_h_samp_factor * d->max_v_samp_factor;
 
-  for (uint32_t row = 0; row < d->mcu_height; row += d->max_v_samp_factor) {
-    for (uint32_t col = 0; col < d->mcu_width; col += d->max_h_samp_factor) {
-      if (restart_interval != 0 && (row * d->mcu_width_real + col) % restart_interval == 0) {
-        previous_dcs[0] = 0;
-        previous_dcs[1] = 0;
-        previous_dcs[2] = 0;
+  uint32_t total_mcus = d->mcu_height * d->mcu_width;
+  for (uint32_t i = 0; i < total_mcus; i++) {
+    for (uint32_t j = 0; j < d->num_color_components; j++) {
+      uint32_t mcu_index = (i * 3 + j) * 64;
 
-        // Align get buffer to next byte
-        uint32_t offset = d->bits_left % 8;
-        if (offset != 0) {
-          d->get_buffer <<= offset;
-          d->bits_left -= offset;
-        }
+      if (decode_mcu(d, mcu_index, j, &previous_dcs[j]) != 0) {
+        d->valid = 0;
+        printf("Error: Invalid MCU\n");
+        return;
       }
 
-      for (uint32_t index = 0; index < d->num_color_components; index++) {
-        for (uint32_t y = 0; y < d->color_components[index].v_samp_factor; y++) {
-          for (uint32_t x = 0; x < d->color_components[index].h_samp_factor; x++) {
-            // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
-            // + (current col + horizontal sampling)
-            uint32_t mcu_index = (row + y) * d->mcu_width_real + (col + x);
-
-            // Decode Huffman coded bitstream
-            if (decode_mcu(d, mcu_index, index, &previous_dcs[index]) != 0) {
-              d->valid = 0;
-              printf("Error: Invalid MCU\n");
-              return;
-            }
-
-            // Compute inverse DCT with ANN algorithm
-            inverse_dct_component(mcu_index, index);
-          }
-        }
-      }
-
-      // Convert from YCbCr to RGB
-      uint32_t cbcr_index = row * d->mcu_width_real + col;
-      for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
-        for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
-          uint32_t mcu_index = (row + y) * d->mcu_width_real + (col + x);
-          ycbcr_to_rgb_pixel(mcu_index, cbcr_index, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
-        }
-      }
+      inverse_dct_component(mcu_index);
     }
+
+    uint32_t mcu_index = i * 3 * 64;
+    ycbcr_to_rgb_pixel(mcu_index, mcu_index, d->max_v_samp_factor, d->max_h_samp_factor, 0, 0);
   }
+
+  // for (int i = 10000; i < 10005; i++) {
+  //   for (int j = 0; j < 3; j++) {
+  //     for (int k = 0; k < 64; k++) {
+  //       if (k % 8 == 0) {
+  //         printf("\n");
+  //       }
+  //       printf("%d ", MCU_buffer[(i * 3 + j) * 64 + k]);
+  //     }
+  //     printf("\n");
+  //   }
+  // }
+
+  // for (uint32_t row = 0; row < d->mcu_height; row += d->max_v_samp_factor) {
+  //   for (uint32_t col = 0; col < d->mcu_width; col += d->max_h_samp_factor) {
+  //     if (restart_interval != 0 && (row * d->mcu_width_real + col) % restart_interval == 0) {
+  //       previous_dcs[0] = 0;
+  //       previous_dcs[1] = 0;
+  //       previous_dcs[2] = 0;
+
+  //       // Align get buffer to next byte
+  //       uint32_t offset = d->bits_left % 8;
+  //       if (offset != 0) {
+  //         d->get_buffer <<= offset;
+  //         d->bits_left -= offset;
+  //       }
+  //     }
+
+  //     for (uint32_t index = 0; index < d->num_color_components; index++) {
+  //       for (uint32_t y = 0; y < d->color_components[index].v_samp_factor; y++) {
+  //         for (uint32_t x = 0; x < d->color_components[index].h_samp_factor; x++) {
+  //           // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
+  //           // + (current col + horizontal sampling)
+  //           uint32_t mcu_index = (row + y) * d->mcu_width_real + (col + x);
+
+  //           // Decode Huffman coded bitstream
+  //           if (decode_mcu(d, mcu_index, index, &previous_dcs[index]) != 0) {
+  //             d->valid = 0;
+  //             printf("Error: Invalid MCU\n");
+  //             return;
+  //           }
+
+  //           // Compute inverse DCT with ANN algorithm
+  //           inverse_dct_component(mcu_index, index);
+  //         }
+  //       }
+  //     }
+
+  //     // Convert from YCbCr to RGB
+  //     uint32_t cbcr_index = row * d->mcu_width_real + col;
+  //     for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
+  //       for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
+  //         uint32_t mcu_index = (row + y) * d->mcu_width_real + (col + x);
+  //         ycbcr_to_rgb_pixel(mcu_index, cbcr_index, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
+  //       }
+  //     }
+  //   }
+  // }
 }
 
 /**
@@ -1078,16 +1100,23 @@ int main() {
     return 1;
   }
 
-  print_jpeg_decompressor(&decompressor);
+  // print_jpeg_decompressor(&decompressor);
 
   // Process Huffman coded bitstream, perform inverse DCT, and convert YCbCr to RGB
-  // TODO: divide work amonst tasklets
+  // TODO: divide work amongst tasklets, one way to do this is to divide up the huffman coded bitstream evenly amongst
+  // all tasklets, and then let each tasklet scan the huffman table until it reaches a code 0x00 (which signifies the
+  // end of an MCU block), and then start at the next block. This will allow each tasklet decode around the same amount
+  // of bits
   decompress_scanline(&decompressor);
   if (!decompressor.valid) {
     printf("Error: Invalid JPEG\n");
     return 1;
   }
 
-  printf("\n");
+  output.image_width = decompressor.image_width;
+  output.image_height = decompressor.image_height;
+  output.padding = decompressor.padding;
+  output.mcu_width_real = decompressor.mcu_width_real;
+
   return 0;
 }

@@ -70,4 +70,11 @@ typedef struct {
   uint64_t file_length;
 } dpu_input_t;
 
+typedef struct {
+  uint16_t image_width;
+  uint16_t image_height;
+  uint32_t padding;
+  uint32_t mcu_width_real;
+} dpu_output_t;
+
 #endif /* _JPEG_HOST__H */
