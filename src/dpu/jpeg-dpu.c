@@ -10,8 +10,10 @@ __host dpu_output_t output;
 // TODO: implicit MRAM access currently, change to explicit once logic is finished
 __mram_noinit char file_buffer[16 << 20];
 // About 32MB
-// __mram_noinit short MCU_buffer[87380][3][64];
 __mram_noinit short MCU_buffer[87380 * 3 * 64];
+
+#define PREFETCH_SIZE 1024
+__dma_aligned char file_buffer_cache[NR_TASKLETS][PREFETCH_SIZE];
 
 /**
  * Helper array for filling in quantization table in zigzag order
@@ -26,7 +28,7 @@ const uint8_t ZIGZAG_ORDER[] = {0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 
  *
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
-static int eof(JpegDecompressor *d) { return (d->index >= d->length); }
+static int eof(JpegDecompressor *d) { return ((d->file_index + d->cache_index) >= d->length); }
 
 /**
  * Helper function to read a byte from the file
@@ -36,7 +38,13 @@ static int eof(JpegDecompressor *d) { return (d->index >= d->length); }
 static uint8_t read_byte(JpegDecompressor *d) {
   uint8_t temp;
 
-  temp = file_buffer[d->index++];
+  if (d->cache_index >= PREFETCH_SIZE) {
+    d->file_index += PREFETCH_SIZE;
+    mram_read(&file_buffer[d->file_index], file_buffer_cache, PREFETCH_SIZE);
+    d->cache_index = 0;
+  }
+
+  temp = file_buffer_cache[d->tasklet_id][d->cache_index++];
   return temp;
 }
 
@@ -49,8 +57,8 @@ static uint16_t read_short(JpegDecompressor *d) {
   uint16_t temp3;
   uint8_t temp1, temp2;
 
-  temp1 = file_buffer[d->index++];
-  temp2 = file_buffer[d->index++];
+  temp1 = read_byte(d);
+  temp2 = read_byte(d);
 
   temp3 = (temp1 << 8) | temp2;
   return temp3;
@@ -64,10 +72,20 @@ static uint16_t read_short(JpegDecompressor *d) {
  */
 static void skip_bytes(JpegDecompressor *d, int count) {
   // If after skipping count bytes we go beyond EOF, then only skip till EOF
-  if (d->index + count > d->length)
-    d->index = d->length;
-  else
-    d->index += count;
+  if (d->file_index + d->cache_index + count > d->length) {
+    d->file_index = d->length;
+    d->cache_index = 0;
+  } else {
+    int offset = d->cache_index + count;
+    if (offset >= PREFETCH_SIZE) {
+      while (offset >= PREFETCH_SIZE) {
+        offset -= PREFETCH_SIZE;
+        d->file_index += PREFETCH_SIZE;
+      }
+      mram_read(&file_buffer[d->file_index], file_buffer_cache, PREFETCH_SIZE);
+    }
+    d->cache_index = offset;
+  }
 }
 
 /**
@@ -808,6 +826,8 @@ static void decompress_scanline(JpegDecompressor *d) {
   short previous_dcs[3] = {0};
   uint32_t restart_interval = d->restart_interval * d->max_h_samp_factor * d->max_v_samp_factor;
 
+  // TODO: Increment row by mcu_width_real instead of max_v_samp_factor or something, optimize it to involve less
+  // multiplication
   for (uint32_t row = 0; row < d->mcu_height; row += d->max_v_samp_factor) {
     for (uint32_t col = 0; col < d->mcu_width; col += d->max_h_samp_factor) {
       // if (restart_interval != 0 && (row * d->mcu_width_real + col) % restart_interval == 0) {
@@ -1027,7 +1047,8 @@ static void print_jpeg_decompressor(JpegDecompressor *d) {
  */
 static void init_jpeg_decompressor(JpegDecompressor *d) {
   d->valid = 1;
-  d->index = 0;
+  d->file_index = -PREFETCH_SIZE;
+  d->cache_index = PREFETCH_SIZE;
 
   for (int i = 0; i < 4; i++) {
     d->quant_tables[i].exists = 0;
@@ -1065,6 +1086,7 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
 int main() {
   JpegDecompressor decompressor;
   int res = 1;
+  decompressor.tasklet_id = me();
 
   decompressor.length = input.file_length;
   init_jpeg_decompressor(&decompressor);
@@ -1082,7 +1104,7 @@ int main() {
     return 1;
   }
 
-  print_jpeg_decompressor(&decompressor);
+  // print_jpeg_decompressor(&decompressor);
 
   // Process Huffman coded bitstream, perform inverse DCT, and convert YCbCr to RGB
   // TODO: divide work amongst tasklets, one way to do this is to divide up the huffman coded bitstream evenly amongst

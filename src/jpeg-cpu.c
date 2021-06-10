@@ -1276,7 +1276,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
     return;
   }
 
-  print_jpeg_decompressor(&decompressor);
+  // print_jpeg_decompressor(&decompressor);
 
 #if TIME
   TIME_NOW(&start);

@@ -54,6 +54,7 @@ static char *to_bin(uint64_t i, uint8_t length) {
 }
 #endif // DEBUG
 
+/*
 int scale_rank(struct dpu_set_t dpu_rank, uint8_t rank_id, struct host_dpu_descriptor input[], uint32_t file_count,
                uint32_t used_dpus, struct jpeg_options *opts) {
   struct dpu_set_t dpu;
@@ -326,7 +327,7 @@ int check_for_completed_rank(struct dpu_set_t dpus, uint64_t *rank_status, struc
     rank_id++;
   }
   return 0;
-}
+}*/
 
 /**
  * Read the contents of a file into an in-memory buffer. Upon success,
@@ -358,12 +359,12 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   struct host_rank_context *ctx;
   struct dpu_set_t dpus, dpu_rank, dpu;
   int status;
-  uint8_t rank_id;
-  uint64_t rank_status = 0; // bitmap indicating if the rank is busy or free
-  uint32_t submitted;
+  // uint8_t rank_id;
+  // uint64_t rank_status = 0; // bitmap indicating if the rank is busy or free
+  // uint32_t submitted;
 
 #ifdef STATISTICS
-  struct timespec start_load, stop_load;
+  // struct timespec start_load, stop_load;
 #endif // STATISTICS
 
 #ifdef BULK_TRANSFER
@@ -482,6 +483,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
         ptr++;
       }
     }
+    remaining_file_count--;
 
     write_bmp("output.bmp", &image);
     free(image.data);

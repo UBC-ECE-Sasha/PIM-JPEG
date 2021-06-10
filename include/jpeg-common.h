@@ -99,10 +99,13 @@ typedef struct ColorComponentInfo {
 } ColorComponentInfo;
 
 typedef struct JpegDecompressor {
-  char *ptr;  // current position within JPEG
-  char *data; // start position of JPEG
-  uint32_t index;
+  char *ptr;       // current position within JPEG
+  char *data;      // start position of JPEG
   uint32_t length; // total length of JPEG
+
+  uint32_t tasklet_id;
+  int file_index;
+  uint32_t cache_index;
 
   uint8_t valid; // indicates whether file is actually a JPEG file
 
