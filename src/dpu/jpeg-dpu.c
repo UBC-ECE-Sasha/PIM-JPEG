@@ -808,22 +808,50 @@ static void decompress_scanline(JpegDecompressor *d) {
   short previous_dcs[3] = {0};
   uint32_t restart_interval = d->restart_interval * d->max_h_samp_factor * d->max_v_samp_factor;
 
-  uint32_t total_mcus = d->mcu_height * d->mcu_width;
-  for (uint32_t i = 0; i < total_mcus; i++) {
-    for (uint32_t j = 0; j < d->num_color_components; j++) {
-      uint32_t mcu_index = (i * 3 + j) * 64;
+  for (uint32_t row = 0; row < d->mcu_height; row += d->max_v_samp_factor) {
+    for (uint32_t col = 0; col < d->mcu_width; col += d->max_h_samp_factor) {
+      // if (restart_interval != 0 && (row * d->mcu_width_real + col) % restart_interval == 0) {
+      //   previous_dcs[0] = 0;
+      //   previous_dcs[1] = 0;
+      //   previous_dcs[2] = 0;
 
-      if (decode_mcu(d, mcu_index, j, &previous_dcs[j]) != 0) {
-        d->valid = 0;
-        printf("Error: Invalid MCU\n");
-        return;
+      //   // Align get buffer to next byte
+      //   uint32_t offset = d->bits_left % 8;
+      //   if (offset != 0) {
+      //     d->get_buffer <<= offset;
+      //     d->bits_left -= offset;
+      //   }
+      // }
+
+      for (uint32_t index = 0; index < d->num_color_components; index++) {
+        for (uint32_t y = 0; y < d->color_components[index].v_samp_factor; y++) {
+          for (uint32_t x = 0; x < d->color_components[index].h_samp_factor; x++) {
+            // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
+            // + (current col + horizontal sampling)
+            uint32_t mcu_index = (((row + y) * d->mcu_width_real + (col + x)) * 3 + index) * 64;
+
+            // Decode Huffman coded bitstream
+            if (decode_mcu(d, mcu_index, index, &previous_dcs[index]) != 0) {
+              d->valid = 0;
+              printf("Error: Invalid MCU\n");
+              return;
+            }
+
+            // Compute inverse DCT with ANN algorithm
+            inverse_dct_component(mcu_index);
+          }
+        }
       }
 
-      inverse_dct_component(mcu_index);
+      // Convert from YCbCr to RGB
+      uint32_t cbcr_index = (row * d->mcu_width_real + col) * 3 * 64;
+      for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
+        for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
+          uint32_t mcu_index = ((row + y) * d->mcu_width_real + (col + x)) * 3 * 64;
+          ycbcr_to_rgb_pixel(mcu_index, cbcr_index, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
+        }
+      }
     }
-
-    uint32_t mcu_index = i * 3 * 64;
-    ycbcr_to_rgb_pixel(mcu_index, mcu_index, d->max_v_samp_factor, d->max_h_samp_factor, 0, 0);
   }
 
   // for (int i = 10000; i < 10005; i++) {
@@ -835,52 +863,6 @@ static void decompress_scanline(JpegDecompressor *d) {
   //       printf("%d ", MCU_buffer[(i * 3 + j) * 64 + k]);
   //     }
   //     printf("\n");
-  //   }
-  // }
-
-  // for (uint32_t row = 0; row < d->mcu_height; row += d->max_v_samp_factor) {
-  //   for (uint32_t col = 0; col < d->mcu_width; col += d->max_h_samp_factor) {
-  //     if (restart_interval != 0 && (row * d->mcu_width_real + col) % restart_interval == 0) {
-  //       previous_dcs[0] = 0;
-  //       previous_dcs[1] = 0;
-  //       previous_dcs[2] = 0;
-
-  //       // Align get buffer to next byte
-  //       uint32_t offset = d->bits_left % 8;
-  //       if (offset != 0) {
-  //         d->get_buffer <<= offset;
-  //         d->bits_left -= offset;
-  //       }
-  //     }
-
-  //     for (uint32_t index = 0; index < d->num_color_components; index++) {
-  //       for (uint32_t y = 0; y < d->color_components[index].v_samp_factor; y++) {
-  //         for (uint32_t x = 0; x < d->color_components[index].h_samp_factor; x++) {
-  //           // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
-  //           // + (current col + horizontal sampling)
-  //           uint32_t mcu_index = (row + y) * d->mcu_width_real + (col + x);
-
-  //           // Decode Huffman coded bitstream
-  //           if (decode_mcu(d, mcu_index, index, &previous_dcs[index]) != 0) {
-  //             d->valid = 0;
-  //             printf("Error: Invalid MCU\n");
-  //             return;
-  //           }
-
-  //           // Compute inverse DCT with ANN algorithm
-  //           inverse_dct_component(mcu_index, index);
-  //         }
-  //       }
-  //     }
-
-  //     // Convert from YCbCr to RGB
-  //     uint32_t cbcr_index = row * d->mcu_width_real + col;
-  //     for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
-  //       for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
-  //         uint32_t mcu_index = (row + y) * d->mcu_width_real + (col + x);
-  //         ycbcr_to_rgb_pixel(mcu_index, cbcr_index, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
-  //       }
-  //     }
   //   }
   // }
 }
@@ -1100,7 +1082,7 @@ int main() {
     return 1;
   }
 
-  // print_jpeg_decompressor(&decompressor);
+  print_jpeg_decompressor(&decompressor);
 
   // Process Huffman coded bitstream, perform inverse DCT, and convert YCbCr to RGB
   // TODO: divide work amongst tasklets, one way to do this is to divide up the huffman coded bitstream evenly amongst
