@@ -836,10 +836,10 @@ static void ycbcr_to_rgb_pixel(JpegDecompressor *d, uint32_t cache_index, int v,
 static void decompress_scanline(JpegDecompressor *d) {
   short previous_dcs[3] = {0};
   uint32_t restart_interval = d->restart_interval * d->max_h_samp_factor * d->max_v_samp_factor;
+  uint32_t total_rows = d->mcu_height * d->mcu_width_real;
+  uint32_t row_increment = d->max_v_samp_factor * d->mcu_width_real;
 
-  // TODO: Increment row by mcu_width_real instead of max_v_samp_factor or something, optimize it to involve less
-  // multiplication
-  for (uint32_t row = 0; row < d->mcu_height; row += d->max_v_samp_factor) {
+  for (uint32_t row = 0; row < total_rows; row += row_increment) {
     for (uint32_t col = 0; col < d->mcu_width; col += d->max_h_samp_factor) {
       // if (restart_interval != 0 && (row * d->mcu_width_real + col) % restart_interval == 0) {
       //   previous_dcs[0] = 0;
@@ -854,93 +854,76 @@ static void decompress_scanline(JpegDecompressor *d) {
       //   }
       // }
 
-      // TODO: hardcode these for loops for better performance?
-      for (uint32_t index = 0; index < d->num_color_components; index++) {
-        uint32_t cache_index = index * 64;
-
-        // Decode Huffman coded bitstream
+      // Decode Huffman coded bitstream and compute inverse DCT with ANN algorithm
+      for (uint32_t index = 0; index < 3; index++) {
+        uint32_t cache_index = index << 6;
         if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
           d->valid = 0;
           printf("Error: Invalid MCU\n");
           return;
         }
 
-        // Compute inverse DCT with ANN algorithm
         inverse_dct_component(d, cache_index);
 
         if (d->color_components[index].h_samp_factor == 2) {
-          uint32_t cache_index = 192;
-
-          // Decode Huffman coded bitstream
+          cache_index = 192;
           if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
             d->valid = 0;
             printf("Error: Invalid MCU\n");
             return;
           }
-
-          // Compute inverse DCT with ANN algorithm
           inverse_dct_component(d, cache_index);
         }
 
         if (d->color_components[index].v_samp_factor == 2) {
-          uint32_t cache_index = 384;
-
-          // Decode Huffman coded bitstream
+          cache_index = 384;
           if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
             d->valid = 0;
             printf("Error: Invalid MCU\n");
             return;
           }
-
-          // Compute inverse DCT with ANN algorithm
           inverse_dct_component(d, cache_index);
         }
 
         if (d->color_components[index].v_samp_factor == 2 && d->color_components[index].h_samp_factor == 2) {
-          uint32_t cache_index = 576;
-
-          // Decode Huffman coded bitstream
+          cache_index = 576;
           if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
             d->valid = 0;
             printf("Error: Invalid MCU\n");
             return;
           }
-
-          // Compute inverse DCT with ANN algorithm
           inverse_dct_component(d, cache_index);
         }
-
-        // for (uint32_t y = 0; y < d->color_components[index].v_samp_factor; y++) {
-        //   for (uint32_t x = 0; x < d->color_components[index].h_samp_factor; x++) {
-        //     uint32_t cache_index = (y * 384) + (x * 192) + (index * 64);
-        //     printf("%d\n", cache_index);
-
-        //     // Decode Huffman coded bitstream
-        //     if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
-        //       d->valid = 0;
-        //       printf("Error: Invalid MCU\n");
-        //       return;
-        //     }
-
-        //     // Compute inverse DCT with ANN algorithm
-        //     inverse_dct_component(d, cache_index);
-        //   }
-        // }
       }
 
       // Convert from YCbCr to RGB
-      for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
-        for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
-          // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
-          // + (current col + horizontal sampling)
-          uint32_t mcu_index = ((row + y) * d->mcu_width_real + (col + x)) * 3 * 64;
-          uint32_t cache_index = (y * 384) + (x * 192);
+      uint32_t mcu_index = (row + col) * 192;
+      uint32_t cache_index;
 
-          ycbcr_to_rgb_pixel(d, cache_index, y, x);
-
-          mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[mcu_index], 384);
-        }
+      if (d->max_v_samp_factor == 2 && d->max_h_samp_factor == 2) {
+        uint32_t mcu_index0 = mcu_index + (d->mcu_width_real + 1) * 192;
+        cache_index = 576;
+        ycbcr_to_rgb_pixel(d, cache_index, 1, 1);
+        mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[mcu_index0], 384);
       }
+
+      if (d->max_v_samp_factor == 2) {
+        uint32_t mcu_index0 = mcu_index + d->mcu_width_real * 192;
+        cache_index = 384;
+        ycbcr_to_rgb_pixel(d, cache_index, 1, 0);
+        mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[mcu_index0], 384);
+      }
+
+      if (d->max_h_samp_factor == 2) {
+        uint32_t mcu_index0 = mcu_index + 192;
+        cache_index = 192;
+        ycbcr_to_rgb_pixel(d, cache_index, 0, 1);
+        mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[mcu_index0], 384);
+      }
+
+      cache_index = 0;
+      ycbcr_to_rgb_pixel(d, cache_index, 0, 0);
+      mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[mcu_index], 384);
     }
   }
 }
