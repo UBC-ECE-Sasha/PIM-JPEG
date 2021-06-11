@@ -7,13 +7,16 @@
 
 __host dpu_input_t input;
 __host dpu_output_t output;
-// TODO: implicit MRAM access currently, change to explicit once logic is finished
 __mram_noinit char file_buffer[16 << 20];
 // About 32MB
 __mram_noinit short MCU_buffer[87380 * 3 * 64];
 
+// TODO: processing JPEG markers/headers in host CPU may be faster
+// TODO: maybe seqread is faster?
 #define PREFETCH_SIZE 1024
+#define PREWRITE_SIZE 768
 __dma_aligned char file_buffer_cache[NR_TASKLETS][PREFETCH_SIZE];
+__dma_aligned short MCU_buffer_cache[NR_TASKLETS][PREWRITE_SIZE];
 
 /**
  * Helper array for filling in quantization table in zigzag order
@@ -72,7 +75,7 @@ static uint16_t read_short(JpegDecompressor *d) {
  */
 static void skip_bytes(JpegDecompressor *d, int count) {
   // If after skipping count bytes we go beyond EOF, then only skip till EOF
-  if (d->file_index + d->cache_index + count > d->length) {
+  if (d->file_index + d->cache_index + count >= d->length) {
     d->file_index = d->length;
     d->cache_index = 0;
   } else {
@@ -535,7 +538,8 @@ static uint8_t huff_decode(JpegDecompressor *d, HuffmanTable *h_table) {
  *                        used to determine which quantization table and Huffman tables to use
  * @param previous_dc The value of the previous DC coefficient, needed to calculate value of current DC coefficient
  */
-static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t component_index, short *previous_dc) {
+static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t cache_index, uint32_t component_index,
+                      short *previous_dc) {
   QuantizationTable *q_table = &d->quant_tables[d->color_components[component_index].quant_table_id];
   HuffmanTable *dc_table = &d->dc_huffman_tables[d->color_components[component_index].dc_huffman_table_id];
   HuffmanTable *ac_table = &d->ac_huffman_tables[d->color_components[component_index].ac_huffman_table_id];
@@ -556,10 +560,10 @@ static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t componen
     // Convert to negative coefficient
     coeff -= (1 << dc_length) - 1;
   }
-  MCU_buffer[mcu_index] = coeff + *previous_dc;
-  *previous_dc = MCU_buffer[mcu_index];
+  MCU_buffer_cache[d->tasklet_id][cache_index] = coeff + *previous_dc;
+  *previous_dc = MCU_buffer_cache[d->tasklet_id][cache_index];
   // Dequantization
-  MCU_buffer[mcu_index] *= q_table->table[0];
+  MCU_buffer_cache[d->tasklet_id][cache_index] *= q_table->table[0];
 
   // Get the AC values for this MCU block
   int i = 1;
@@ -573,7 +577,7 @@ static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t componen
     // Got 0x00, fill remaining MCU block with 0s
     if (ac_length == 0x00) {
       while (i < 64) {
-        MCU_buffer[mcu_index + ZIGZAG_ORDER[i++]] = 0;
+        MCU_buffer_cache[d->tasklet_id][cache_index + ZIGZAG_ORDER[i++]] = 0;
       }
       break;
     }
@@ -593,7 +597,7 @@ static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t componen
       return -1;
     }
     for (int j = 0; j < num_zeroes; j++) {
-      MCU_buffer[mcu_index + ZIGZAG_ORDER[i++]] = 0;
+      MCU_buffer_cache[d->tasklet_id][cache_index + ZIGZAG_ORDER[i++]] = 0;
     }
 
     if (coeff_length > 10) {
@@ -607,7 +611,7 @@ static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t componen
         coeff -= (1 << coeff_length) - 1;
       }
       // Write coefficient to buffer as well as perform dequantization
-      MCU_buffer[mcu_index + ZIGZAG_ORDER[i]] = coeff * q_table->table[ZIGZAG_ORDER[i]];
+      MCU_buffer_cache[d->tasklet_id][cache_index + ZIGZAG_ORDER[i]] = coeff * q_table->table[ZIGZAG_ORDER[i]];
       i++;
     }
   }
@@ -849,28 +853,32 @@ static void decompress_scanline(JpegDecompressor *d) {
             // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
             // + (current col + horizontal sampling)
             uint32_t mcu_index = (((row + y) * d->mcu_width_real + (col + x)) * 3 + index) * 64;
+            uint32_t cache_index = (y * 384) + (x * 192) + (index * 64);
 
             // Decode Huffman coded bitstream
-            if (decode_mcu(d, mcu_index, index, &previous_dcs[index]) != 0) {
+            if (decode_mcu(d, mcu_index, cache_index, index, &previous_dcs[index]) != 0) {
               d->valid = 0;
               printf("Error: Invalid MCU\n");
               return;
             }
 
             // Compute inverse DCT with ANN algorithm
-            inverse_dct_component(mcu_index);
+            // inverse_dct_component(mcu_index);
+
+            mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[mcu_index], 128);
           }
         }
       }
 
-      // Convert from YCbCr to RGB
-      uint32_t cbcr_index = (row * d->mcu_width_real + col) * 3 * 64;
-      for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
-        for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
-          uint32_t mcu_index = ((row + y) * d->mcu_width_real + (col + x)) * 3 * 64;
-          ycbcr_to_rgb_pixel(mcu_index, cbcr_index, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
-        }
-      }
+      // // Convert from YCbCr to RGB
+      // uint32_t cbcr_index = (row * d->mcu_width_real + col) * 3 * 64;
+      // for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
+      //   for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
+      //     uint32_t mcu_index = ((row + y) * d->mcu_width_real + (col + x)) * 3 * 64;
+      //     ycbcr_to_rgb_pixel(mcu_index, cbcr_index, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
+      //     // TODO: mram_write
+      //   }
+      // }
     }
   }
 
