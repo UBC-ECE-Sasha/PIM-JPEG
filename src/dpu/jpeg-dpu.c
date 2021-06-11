@@ -533,13 +533,12 @@ static uint8_t huff_decode(JpegDecompressor *d, HuffmanTable *h_table) {
  * F.2.1.2 Decode 8x8 block data unit
  *
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- * @param mcu_index The mcu index specifies which mcu block to index into from the MCU_buffer
+ * @param cache_index The cache index specifies which cache block to index into in the MCU_buffer_cache
  * @param component_index The component index specifies which color channel to use (Y, Cb, Cr),
  *                        used to determine which quantization table and Huffman tables to use
  * @param previous_dc The value of the previous DC coefficient, needed to calculate value of current DC coefficient
  */
-static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t cache_index, uint32_t component_index,
-                      short *previous_dc) {
+static int decode_mcu(JpegDecompressor *d, uint32_t cache_index, uint32_t component_index, short *previous_dc) {
   QuantizationTable *q_table = &d->quant_tables[d->color_components[component_index].quant_table_id];
   HuffmanTable *dc_table = &d->dc_huffman_tables[d->color_components[component_index].dc_huffman_table_id];
   HuffmanTable *ac_table = &d->ac_huffman_tables[d->color_components[component_index].ac_huffman_table_id];
@@ -622,21 +621,22 @@ static int decode_mcu(JpegDecompressor *d, uint32_t mcu_index, uint32_t cache_in
 /**
  * Function to perform inverse DCT for one of the color components of an MCU using integers only
  *
- * @param mcu_index The mcu index specifies which mcu block to index into from the MCU_buffer
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
+ * @param cache_index The cache index specifies which cache block to index into in the MCU_buffer_cache
  */
-static void inverse_dct_component(uint32_t mcu_index) {
+static void inverse_dct_component(JpegDecompressor *d, uint32_t cache_index) {
   // ANN algorithm, intermediate values are bit shifted to the left to preserve precision
   // and then bit shifted to the right at the end
   for (int i = 0; i < 8; i++) {
     // Higher accuracy
-    int g0 = (MCU_buffer[mcu_index + 0 * 8 + i] * 181) >> 5;
-    int g1 = (MCU_buffer[mcu_index + 4 * 8 + i] * 181) >> 5;
-    int g2 = (MCU_buffer[mcu_index + 2 * 8 + i] * 59) >> 3;
-    int g3 = (MCU_buffer[mcu_index + 6 * 8 + i] * 49) >> 4;
-    int g4 = (MCU_buffer[mcu_index + 5 * 8 + i] * 71) >> 4;
-    int g5 = (MCU_buffer[mcu_index + 1 * 8 + i] * 251) >> 5;
-    int g6 = (MCU_buffer[mcu_index + 7 * 8 + i] * 25) >> 4;
-    int g7 = (MCU_buffer[mcu_index + 3 * 8 + i] * 213) >> 5;
+    int g0 = (MCU_buffer_cache[d->tasklet_id][cache_index + 0 * 8 + i] * 181) >> 5;
+    int g1 = (MCU_buffer_cache[d->tasklet_id][cache_index + 4 * 8 + i] * 181) >> 5;
+    int g2 = (MCU_buffer_cache[d->tasklet_id][cache_index + 2 * 8 + i] * 59) >> 3;
+    int g3 = (MCU_buffer_cache[d->tasklet_id][cache_index + 6 * 8 + i] * 49) >> 4;
+    int g4 = (MCU_buffer_cache[d->tasklet_id][cache_index + 5 * 8 + i] * 71) >> 4;
+    int g5 = (MCU_buffer_cache[d->tasklet_id][cache_index + 1 * 8 + i] * 251) >> 5;
+    int g6 = (MCU_buffer_cache[d->tasklet_id][cache_index + 7 * 8 + i] * 25) >> 4;
+    int g7 = (MCU_buffer_cache[d->tasklet_id][cache_index + 3 * 8 + i] * 213) >> 5;
 
     // Lower accuracy
     // int g0 = (MCU_buffer[mcu_index + 0 * 8 + i] * 22) >> 2;
@@ -688,26 +688,26 @@ static void inverse_dct_component(uint32_t mcu_index) {
     int b4 = c4 - c8;
     int b6 = c6 - e7;
 
-    MCU_buffer[mcu_index + 0 * 8 + i] = (b0 + e7) >> 4;
-    MCU_buffer[mcu_index + 1 * 8 + i] = (b1 + b6) >> 4;
-    MCU_buffer[mcu_index + 2 * 8 + i] = (b2 + c8) >> 4;
-    MCU_buffer[mcu_index + 3 * 8 + i] = (b3 + b4) >> 4;
-    MCU_buffer[mcu_index + 4 * 8 + i] = (b3 - b4) >> 4;
-    MCU_buffer[mcu_index + 5 * 8 + i] = (b2 - c8) >> 4;
-    MCU_buffer[mcu_index + 6 * 8 + i] = (b1 - b6) >> 4;
-    MCU_buffer[mcu_index + 7 * 8 + i] = (b0 - e7) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + 0 * 8 + i] = (b0 + e7) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + 1 * 8 + i] = (b1 + b6) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + 2 * 8 + i] = (b2 + c8) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + 3 * 8 + i] = (b3 + b4) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + 4 * 8 + i] = (b3 - b4) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + 5 * 8 + i] = (b2 - c8) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + 6 * 8 + i] = (b1 - b6) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + 7 * 8 + i] = (b0 - e7) >> 4;
   }
 
   for (int i = 0; i < 8; i++) {
     // Higher accuracy
-    int g0 = (MCU_buffer[mcu_index + i * 8 + 0] * 181) >> 5;
-    int g1 = (MCU_buffer[mcu_index + i * 8 + 4] * 181) >> 5;
-    int g2 = (MCU_buffer[mcu_index + i * 8 + 2] * 59) >> 3;
-    int g3 = (MCU_buffer[mcu_index + i * 8 + 6] * 49) >> 4;
-    int g4 = (MCU_buffer[mcu_index + i * 8 + 5] * 71) >> 4;
-    int g5 = (MCU_buffer[mcu_index + i * 8 + 1] * 251) >> 5;
-    int g6 = (MCU_buffer[mcu_index + i * 8 + 7] * 25) >> 4;
-    int g7 = (MCU_buffer[mcu_index + i * 8 + 3] * 213) >> 5;
+    int g0 = (MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 0] * 181) >> 5;
+    int g1 = (MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 4] * 181) >> 5;
+    int g2 = (MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 2] * 59) >> 3;
+    int g3 = (MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 6] * 49) >> 4;
+    int g4 = (MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 5] * 71) >> 4;
+    int g5 = (MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 1] * 251) >> 5;
+    int g6 = (MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 7] * 25) >> 4;
+    int g7 = (MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 3] * 213) >> 5;
 
     // Lower accuracy
     // int g0 = (MCU_buffer[mcu_index + i * 8 + 0] * 22) >> 2;
@@ -759,14 +759,14 @@ static void inverse_dct_component(uint32_t mcu_index) {
     int b4 = c4 - c8;
     int b6 = c6 - e7;
 
-    MCU_buffer[mcu_index + i * 8 + 0] = (b0 + e7) >> 4;
-    MCU_buffer[mcu_index + i * 8 + 1] = (b1 + b6) >> 4;
-    MCU_buffer[mcu_index + i * 8 + 2] = (b2 + c8) >> 4;
-    MCU_buffer[mcu_index + i * 8 + 3] = (b3 + b4) >> 4;
-    MCU_buffer[mcu_index + i * 8 + 4] = (b3 - b4) >> 4;
-    MCU_buffer[mcu_index + i * 8 + 5] = (b2 - c8) >> 4;
-    MCU_buffer[mcu_index + i * 8 + 6] = (b1 - b6) >> 4;
-    MCU_buffer[mcu_index + i * 8 + 7] = (b0 - e7) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 0] = (b0 + e7) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 1] = (b1 + b6) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 2] = (b2 + c8) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 3] = (b3 + b4) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 4] = (b3 - b4) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 5] = (b2 - c8) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 6] = (b1 - b6) >> 4;
+    MCU_buffer_cache[d->tasklet_id][cache_index + i * 8 + 7] = (b0 - e7) >> 4;
   }
 }
 
@@ -856,14 +856,14 @@ static void decompress_scanline(JpegDecompressor *d) {
             uint32_t cache_index = (y * 384) + (x * 192) + (index * 64);
 
             // Decode Huffman coded bitstream
-            if (decode_mcu(d, mcu_index, cache_index, index, &previous_dcs[index]) != 0) {
+            if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
               d->valid = 0;
               printf("Error: Invalid MCU\n");
               return;
             }
 
             // Compute inverse DCT with ANN algorithm
-            // inverse_dct_component(mcu_index);
+            inverse_dct_component(d, cache_index);
 
             mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[mcu_index], 128);
           }
