@@ -9,6 +9,10 @@
 
 #define MIN_GET_BITS 15
 
+#ifndef NR_TASKLETS
+#define NR_TASKLETS 16
+#endif
+
 /**
  * JPEG Markers: CCITT Rec T.81 page 32
  */
@@ -196,6 +200,8 @@ typedef struct JpegInfo {
   uint32_t mcu_width_real;    // mcu_width + padding, padding must be 0 or 1
   uint32_t max_h_samp_factor; // maximum value of horizontal sampling factors amongst all color components
   uint32_t max_v_samp_factor; // maximum value of vertical sampling factors amongst all color components
+
+  uint32_t mcu_end_index[NR_TASKLETS];
 } JpegInfo;
 
 /**

@@ -847,7 +847,8 @@ static void decompress_scanline(JpegDecompressor *d) {
   for (uint32_t row = 0; row < total_rows; row += row_increment) {
     for (uint32_t col = 0; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
       if (eof(d)) {
-        printf("Tasklet %d reached end of length\n", d->tasklet_id);
+        jpegInfo.mcu_end_index[d->tasklet_id] = (row + col) * 192;
+        // printf("Tasklet %d reached end of length\n", d->tasklet_id);
         return;
       }
       // if (restart_interval != 0 && (row * d->mcu_width_real + col) % restart_interval == 0) {
@@ -867,16 +868,16 @@ static void decompress_scanline(JpegDecompressor *d) {
       for (uint32_t index = 0; index < 3; index++) {
         uint32_t cache_index = index << 6;
         if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
-          printf("Tasklet ID: %d, component index: %d\n", d->tasklet_id, index);
-          for (int i = (row + col - 5) * 192; i < (row + col - 1) * 192; i += 192) {
-            for (int j = i; j < i + 64; j++) {
-              if (j % 8 == 0) {
-                printf("\n");
-              }
-              printf("%d ", MCU_buffer[d->tasklet_id][j]);
-            }
-            printf("\n");
-          }
+          // printf("Tasklet ID: %d, component index: %d\n", d->tasklet_id, index);
+          // for (int i = (row + col - 5) * 192; i < (row + col - 1) * 192; i += 192) {
+          //   for (int j = i; j < i + 64; j++) {
+          //     if (j % 8 == 0) {
+          //       printf("\n");
+          //     }
+          //     printf("%d ", MCU_buffer[d->tasklet_id][j]);
+          //   }
+          //   printf("\n");
+          // }
           jpegInfo.valid = 0;
           printf("Error: Invalid MCU\n");
           return;
@@ -1134,6 +1135,10 @@ static void init_jpeg_info() {
   jpegInfo.mcu_width = 0;
   jpegInfo.mcu_height = 0;
   jpegInfo.padding = 0;
+
+  for (int i = 0; i < NR_TASKLETS; i++) {
+    jpegInfo.mcu_end_index[i] = 0;
+  }
 }
 
 /**
@@ -1145,6 +1150,7 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
   d->tasklet_id = me();
 
   int file_index = jpegInfo.image_data_start + jpegInfo.size_per_tasklet * d->tasklet_id;
+  // Calculating offset so that mram_read is 8 byte aligned
   int offset = file_index % 8;
   d->file_index = file_index - offset - PREFETCH_SIZE;
   d->cache_index = offset + PREFETCH_SIZE;
@@ -1184,7 +1190,6 @@ int main() {
 
     jpegInfo.image_data_start = decompressor.file_index + decompressor.cache_index;
     jpegInfo.size_per_tasklet = (jpegInfo.length - jpegInfo.image_data_start) / NR_TASKLETS;
-    // printf("%d %d %d\n", jpegInfo.image_data_start, jpegInfo.length, jpegInfo.size_per_tasklet);
 
     // print_jpeg_decompressor();
 
@@ -1196,19 +1201,28 @@ int main() {
 
   barrier_wait(&init_barrier);
   init_jpeg_decompressor(&decompressor);
-  printf("Tasklet: %d, start: %d %d, end: %d\n", decompressor.tasklet_id, decompressor.file_index,
-         decompressor.cache_index, decompressor.length);
-  // printf("Length: %d\n", jpegInfo.length);
+  // printf("Tasklet: %d, start: %d %d, end: %d\n", decompressor.tasklet_id, decompressor.file_index,
+  //        decompressor.cache_index, decompressor.length);
 
   // Process Huffman coded bitstream, perform inverse DCT, and convert YCbCr to RGB
-  // TODO: divide work amongst tasklets, one way to do this is to divide up the huffman coded bitstream evenly amongst
-  // all tasklets, and then let each tasklet scan the huffman table until it reaches a code 0x00 (which signifies the
-  // end of an MCU block), and then start at the next block. This will allow each tasklet decode around the same amount
-  // of bits
   decompress_scanline(&decompressor);
-  if (!jpegInfo.valid) {
-    printf("Error: Invalid JPEG\n");
-    return 1;
+  // if (!jpegInfo.valid) {
+  //   printf("Error: Invalid JPEG\n");
+  //   return 1;
+  // }
+
+  // printf("Tasklet %d end index: %d\n", decompressor.tasklet_id, jpegInfo.mcu_end_index[decompressor.tasklet_id]);
+
+  // TODO: use mram_read and mram_write instead of implicit read and write
+  // Combine results
+  if (decompressor.tasklet_id == 0) {
+    uint32_t index = jpegInfo.mcu_end_index[0];
+    for (int i = 1; i < NR_TASKLETS; i++) {
+      for (int j = 0; j < jpegInfo.mcu_end_index[i]; j++) {
+        MCU_buffer[0][index] = MCU_buffer[i][j];
+        index++;
+      }
+    }
   }
 
   // printf("Tasklet: %d\n", decompressor.tasklet_id);
