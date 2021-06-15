@@ -1,3 +1,4 @@
+#include <barrier.h>
 #include <defs.h>
 #include <mram.h>
 #include <stdio.h>
@@ -9,9 +10,12 @@ __host dpu_input_t input;
 __host dpu_output_t output;
 __mram_noinit char file_buffer[16 << 20];
 // About 32MB
-__mram_noinit short MCU_buffer[87380 * 3 * 64];
+__mram_noinit short MCU_buffer[NR_TASKLETS][(87380 * 3 * 64) / NR_TASKLETS];
 
-// TODO: processing JPEG markers/headers in host CPU may be faster
+JpegInfo jpegInfo;
+
+BARRIER_INIT(init_barrier, NR_TASKLETS);
+
 // TODO: maybe seqread is faster?
 #define PREFETCH_SIZE 1024
 #define PREWRITE_SIZE 768
@@ -43,8 +47,8 @@ static uint8_t read_byte(JpegDecompressor *d) {
 
   if (d->cache_index >= PREFETCH_SIZE) {
     d->file_index += PREFETCH_SIZE;
-    mram_read(&file_buffer[d->file_index], file_buffer_cache, PREFETCH_SIZE);
-    d->cache_index = 0;
+    mram_read(&file_buffer[d->file_index], file_buffer_cache[d->tasklet_id], PREFETCH_SIZE);
+    d->cache_index -= PREFETCH_SIZE;
   }
 
   temp = file_buffer_cache[d->tasklet_id][d->cache_index++];
@@ -85,7 +89,7 @@ static void skip_bytes(JpegDecompressor *d, int count) {
         offset -= PREFETCH_SIZE;
         d->file_index += PREFETCH_SIZE;
       }
-      mram_read(&file_buffer[d->file_index], file_buffer_cache, PREFETCH_SIZE);
+      mram_read(&file_buffer[d->file_index], file_buffer_cache[d->tasklet_id], PREFETCH_SIZE);
     }
     d->cache_index = offset;
   }
@@ -100,7 +104,7 @@ static int skip_marker(JpegDecompressor *d) {
   uint16_t length = read_short(d);
   // Length includes itself, so must be at least 2
   if (length < 2) {
-    d->valid = 0;
+    jpegInfo.valid = 0;
     printf("ERROR: Invalid length encountered in skip_marker\n");
     return -1;
   }
@@ -161,7 +165,7 @@ static void process_header(JpegDecompressor *d) {
     c2 = read_byte(d);
   }
   if (c1 != 0xFF || c2 != M_SOI) {
-    d->valid = 0;
+    jpegInfo.valid = 0;
     printf("Error: Not JPEG: %X %X\n", c1, c2);
   } else {
     printf("Got SOI marker: %X %X\n", c1, c2);
@@ -184,30 +188,30 @@ static void process_DQT(JpegDecompressor *d) {
 
     uint8_t table_id = qt_info & 0x0F; // Tq
     if (table_id > 3) {
-      d->valid = 0;
+      jpegInfo.valid = 0;
       printf("Error: Invalid DQT - got quantization table ID: %d, ID should be between 0 and 3\n", table_id);
       return;
     }
-    d->quant_tables[table_id].exists = 1;
+    jpegInfo.quant_tables[table_id].exists = 1;
 
     uint8_t precision = (qt_info >> 4) & 0x0F; // Pq
     if (precision == 0) {
       // 8 bit precision
       for (int i = 0; i < 64; i++) {
-        d->quant_tables[table_id].table[ZIGZAG_ORDER[i]] = read_byte(d); // Qk
+        jpegInfo.quant_tables[table_id].table[ZIGZAG_ORDER[i]] = read_byte(d); // Qk
       }
       length -= 64;
     } else {
       // 16 bit precision
       for (int i = 0; i < 64; i++) {
-        d->quant_tables[table_id].table[ZIGZAG_ORDER[i]] = read_short(d); // Qk
+        jpegInfo.quant_tables[table_id].table[ZIGZAG_ORDER[i]] = read_short(d); // Qk
       }
       length -= 128;
     }
   }
 
   if (length != 0) {
-    d->valid = 0;
+    jpegInfo.valid = 0;
     printf("Error: Invalid DQT - length incorrect\n");
   }
 }
@@ -220,12 +224,12 @@ static void process_DQT(JpegDecompressor *d) {
 static void process_DRI(JpegDecompressor *d) {
   int length = read_short(d);
   if (length != 4) {
-    d->valid = 0;
+    jpegInfo.valid = 0;
     printf("Error: Invalid DRI - length is not 4\n");
     return;
   }
 
-  d->restart_interval = read_short(d);
+  jpegInfo.restart_interval = read_short(d);
 }
 
 /**
@@ -235,8 +239,8 @@ static void process_DRI(JpegDecompressor *d) {
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static void process_SOFn(JpegDecompressor *d) {
-  if (d->num_color_components != 0) {
-    d->valid = 0;
+  if (jpegInfo.num_color_components != 0) {
+    jpegInfo.valid = 0;
     printf("Error: Invalid SOF - multiple SOFs encountered\n");
     return;
   }
@@ -245,43 +249,43 @@ static void process_SOFn(JpegDecompressor *d) {
 
   uint8_t precision = read_byte(d); // P
   if (precision != 8) {
-    d->valid = 0;
+    jpegInfo.valid = 0;
     printf("Error: Invalid SOF - precision is %d, should be 8\n", precision);
     return;
   }
 
-  d->image_height = read_short(d); // Y
-  d->image_width = read_short(d);  // X
-  if (d->image_height == 0 || d->image_width == 0) {
-    d->valid = 0;
-    printf("Error: Invalid SOF - dimensions: %d x %d\n", d->image_width, d->image_height);
+  jpegInfo.image_height = read_short(d); // Y
+  jpegInfo.image_width = read_short(d);  // X
+  if (jpegInfo.image_height == 0 || jpegInfo.image_width == 0) {
+    jpegInfo.valid = 0;
+    printf("Error: Invalid SOF - dimensions: %d x %d\n", jpegInfo.image_width, jpegInfo.image_height);
     return;
   }
 
-  d->mcu_height = (d->image_height + 7) / 8;
-  d->mcu_width = (d->image_width + 7) / 8;
-  d->padding = d->image_width % 4;
-  d->mcu_height_real = d->mcu_height;
-  d->mcu_width_real = d->mcu_width;
+  jpegInfo.mcu_height = (jpegInfo.image_height + 7) / 8;
+  jpegInfo.mcu_width = (jpegInfo.image_width + 7) / 8;
+  jpegInfo.padding = jpegInfo.image_width % 4;
+  jpegInfo.mcu_height_real = jpegInfo.mcu_height;
+  jpegInfo.mcu_width_real = jpegInfo.mcu_width;
 
   // Should be 3
-  d->num_color_components = read_byte(d); // Nf
-  if (d->num_color_components == 0 || d->num_color_components > 3) {
-    d->valid = 0;
-    printf("Error: Invalid SOF - number of color components: %d\n", d->num_color_components);
+  jpegInfo.num_color_components = read_byte(d); // Nf
+  if (jpegInfo.num_color_components == 0 || jpegInfo.num_color_components > 3) {
+    jpegInfo.valid = 0;
+    printf("Error: Invalid SOF - number of color components: %d\n", jpegInfo.num_color_components);
     return;
   }
 
-  for (int i = 0; i < d->num_color_components; i++) {
+  for (int i = 0; i < jpegInfo.num_color_components; i++) {
     // The component ID is expected to be 1, 2, or 3
     uint8_t component_id = read_byte(d); // Ci
     if (component_id == 0 || component_id > 3) {
-      d->valid = 0;
+      jpegInfo.valid = 0;
       printf("Error: Invalid SOF - component ID: %d\n", component_id);
       return;
     }
 
-    ColorComponentInfo *component = &d->color_components[component_id - 1];
+    ColorComponentInfo *component = &jpegInfo.color_components[component_id - 1];
     component->exists = 1;
     component->component_id = component_id;
 
@@ -292,25 +296,25 @@ static void process_SOFn(JpegDecompressor *d) {
       // Only luminance channel can have horizontal or vertical sampling factor greater than 1
       if ((component->h_samp_factor != 1 && component->h_samp_factor != 2) ||
           (component->v_samp_factor != 1 && component->v_samp_factor != 2)) {
-        d->valid = 0;
+        jpegInfo.valid = 0;
         printf("Error: Invalid SOF - horizontal or vertical sampling factor for luminance out of range %d %d\n",
                component->h_samp_factor, component->v_samp_factor);
         return;
       }
 
-      if (component->h_samp_factor == 2 && d->mcu_width % 2 == 1) {
+      if (component->h_samp_factor == 2 && jpegInfo.mcu_width % 2 == 1) {
         // Add padding to real MCU width if horizontal sampling factor is 2
-        d->mcu_width_real++;
+        jpegInfo.mcu_width_real++;
       }
-      if (component->v_samp_factor == 2 && d->mcu_height % 2 == 1) {
+      if (component->v_samp_factor == 2 && jpegInfo.mcu_height % 2 == 1) {
         // Add padding to real MCU height if vertical sampling factor is 2
-        d->mcu_height_real++;
+        jpegInfo.mcu_height_real++;
       }
 
-      d->max_h_samp_factor = component->h_samp_factor;
-      d->max_v_samp_factor = component->v_samp_factor;
+      jpegInfo.max_h_samp_factor = component->h_samp_factor;
+      jpegInfo.max_v_samp_factor = component->v_samp_factor;
     } else if (component->h_samp_factor != 1 || component->v_samp_factor != 1) {
-      d->valid = 0;
+      jpegInfo.valid = 0;
       printf("Error: Invalid SOF - horizontal and vertical sampling factor for Cr and Cb not 1");
       return;
     }
@@ -318,8 +322,8 @@ static void process_SOFn(JpegDecompressor *d) {
     component->quant_table_id = read_byte(d); // Tqi
   }
 
-  if (length - 8 - (3 * d->num_color_components) != 0) {
-    d->valid = 0;
+  if (length - 8 - (3 * jpegInfo.num_color_components) != 0) {
+    jpegInfo.valid = 0;
     printf("Error: Invalid SOF - length incorrect\n");
   }
 }
@@ -342,12 +346,12 @@ static void process_DHT(JpegDecompressor *d) {
     uint8_t table_id = ht_info & 0x0F;        // Th
     uint8_t ac_table = (ht_info >> 4) & 0x0F; // Tc
     if (table_id > 3) {
-      d->valid = 0;
+      jpegInfo.valid = 0;
       printf("Error: Invalid DHT - Huffman Table ID: %d\n", table_id);
       return;
     }
 
-    HuffmanTable *h_table = ac_table ? &d->ac_huffman_tables[table_id] : &d->dc_huffman_tables[table_id];
+    HuffmanTable *h_table = ac_table ? &jpegInfo.ac_huffman_tables[table_id] : &jpegInfo.dc_huffman_tables[table_id];
     h_table->exists = 1;
 
     h_table->valoffset[0] = 0;
@@ -365,7 +369,7 @@ static void process_DHT(JpegDecompressor *d) {
   }
 
   if (length != 0) {
-    d->valid = 0;
+    jpegInfo.valid = 0;
     printf("Error: Invalid DHT - length incorrect\n");
   }
 }
@@ -393,11 +397,11 @@ static void generate_codes(HuffmanTable *h_table) {
  */
 static void build_huffman_tables(JpegDecompressor *d) {
   for (int i = 0; i < 2; i++) {
-    if (d->dc_huffman_tables[i].exists) {
-      generate_codes(&d->dc_huffman_tables[i]);
+    if (jpegInfo.dc_huffman_tables[i].exists) {
+      generate_codes(&jpegInfo.dc_huffman_tables[i]);
     }
-    if (d->ac_huffman_tables[i].exists) {
-      generate_codes(&d->ac_huffman_tables[i]);
+    if (jpegInfo.ac_huffman_tables[i].exists) {
+      generate_codes(&jpegInfo.ac_huffman_tables[i]);
     }
   }
 }
@@ -414,47 +418,47 @@ static void process_SOS(JpegDecompressor *d) {
 
   uint8_t num_components = read_byte(d); // Ns
   length -= 1;
-  if (num_components == 0 || num_components != d->num_color_components) {
-    d->valid = 0;
+  if (num_components == 0 || num_components != jpegInfo.num_color_components) {
+    jpegInfo.valid = 0;
     printf("Error: Invalid SOS - number of color components does not match SOF: %d vs %d\n", num_components,
-           d->num_color_components);
+           jpegInfo.num_color_components);
     return;
   }
 
   for (int i = 0; i < num_components; i++) {
     uint8_t component_id = read_byte(d); // Csj
     if (component_id == 0 || component_id > 3) {
-      d->valid = 0;
+      jpegInfo.valid = 0;
       printf("Error: Invalid SOS - component ID: %d\n", component_id);
       return;
     }
 
-    ColorComponentInfo *component = &d->color_components[component_id - 1];
+    ColorComponentInfo *component = &jpegInfo.color_components[component_id - 1];
     uint8_t tdta = read_byte(d);
     component->dc_huffman_table_id = (tdta >> 4) & 0x0F; // Tdj
     component->ac_huffman_table_id = tdta & 0x0F;        // Taj
   }
 
-  d->ss = read_byte(d); // Ss
-  d->se = read_byte(d); // Se
+  jpegInfo.ss = read_byte(d); // Ss
+  jpegInfo.se = read_byte(d); // Se
   uint8_t A = read_byte(d);
-  d->Ah = (A >> 4) & 0xF; // Ah
-  d->Al = A & 0xF;        // Al
+  jpegInfo.Ah = (A >> 4) & 0xF; // Ah
+  jpegInfo.Al = A & 0xF;        // Al
   length -= 3;
 
-  if (d->ss != 0 || d->se != 63) {
-    d->valid = 0;
+  if (jpegInfo.ss != 0 || jpegInfo.se != 63) {
+    jpegInfo.valid = 0;
     printf("Error: Invalid SOS - invalid spectral selection\n");
     return;
   }
-  if (d->Ah != 0 || d->Al != 0) {
-    d->valid = 0;
+  if (jpegInfo.Ah != 0 || jpegInfo.Al != 0) {
+    jpegInfo.valid = 0;
     printf("Error: Invalid SOS - invalid successive approximation\n");
     return;
   }
 
   if (length - (2 * num_components) != 0) {
-    d->valid = 0;
+    jpegInfo.valid = 0;
     printf("Error: Invalid SOS - length incorrect\n");
   }
 
@@ -539,13 +543,14 @@ static uint8_t huff_decode(JpegDecompressor *d, HuffmanTable *h_table) {
  * @param previous_dc The value of the previous DC coefficient, needed to calculate value of current DC coefficient
  */
 static int decode_mcu(JpegDecompressor *d, uint32_t cache_index, uint32_t component_index, short *previous_dc) {
-  QuantizationTable *q_table = &d->quant_tables[d->color_components[component_index].quant_table_id];
-  HuffmanTable *dc_table = &d->dc_huffman_tables[d->color_components[component_index].dc_huffman_table_id];
-  HuffmanTable *ac_table = &d->ac_huffman_tables[d->color_components[component_index].ac_huffman_table_id];
+  QuantizationTable *q_table = &jpegInfo.quant_tables[jpegInfo.color_components[component_index].quant_table_id];
+  HuffmanTable *dc_table = &jpegInfo.dc_huffman_tables[jpegInfo.color_components[component_index].dc_huffman_table_id];
+  HuffmanTable *ac_table = &jpegInfo.ac_huffman_tables[jpegInfo.color_components[component_index].ac_huffman_table_id];
 
   // Get DC value for this MCU block
   uint8_t dc_length = huff_decode(d, dc_table);
   if (dc_length == (uint8_t)-1) {
+    printf("Tasklet ID: %d, index: %d, dc_length: %d\n", d->tasklet_id, d->file_index + d->cache_index, dc_length);
     printf("Error: Invalid DC code\n");
     return -1;
   }
@@ -780,8 +785,8 @@ static void inverse_dct_component(JpegDecompressor *d, uint32_t cache_index) {
  * @param h Determines whether to read from second horizontal half of CbCr buffer
  */
 static void ycbcr_to_rgb_pixel(JpegDecompressor *d, uint32_t cache_index, int v, int h) {
-  int max_v = d->max_v_samp_factor;
-  int max_h = d->max_h_samp_factor;
+  int max_v = jpegInfo.max_v_samp_factor;
+  int max_h = jpegInfo.max_h_samp_factor;
 
   // Iterating from bottom right to top leftbecause otherwise the pixel data will get overwritten
   for (int y = 7; y >= 0; y--) {
@@ -835,12 +840,16 @@ static void ycbcr_to_rgb_pixel(JpegDecompressor *d, uint32_t cache_index, int v,
  */
 static void decompress_scanline(JpegDecompressor *d) {
   short previous_dcs[3] = {0};
-  uint32_t restart_interval = d->restart_interval * d->max_h_samp_factor * d->max_v_samp_factor;
-  uint32_t total_rows = d->mcu_height * d->mcu_width_real;
-  uint32_t row_increment = d->max_v_samp_factor * d->mcu_width_real;
+  uint32_t restart_interval = jpegInfo.restart_interval * jpegInfo.max_h_samp_factor * jpegInfo.max_v_samp_factor;
+  uint32_t total_rows = jpegInfo.mcu_height * jpegInfo.mcu_width_real;
+  uint32_t row_increment = jpegInfo.max_v_samp_factor * jpegInfo.mcu_width_real;
 
   for (uint32_t row = 0; row < total_rows; row += row_increment) {
-    for (uint32_t col = 0; col < d->mcu_width; col += d->max_h_samp_factor) {
+    for (uint32_t col = 0; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
+      if (eof(d)) {
+        printf("Tasklet %d reached end of length\n", d->tasklet_id);
+        return;
+      }
       // if (restart_interval != 0 && (row * d->mcu_width_real + col) % restart_interval == 0) {
       //   previous_dcs[0] = 0;
       //   previous_dcs[1] = 0;
@@ -858,37 +867,48 @@ static void decompress_scanline(JpegDecompressor *d) {
       for (uint32_t index = 0; index < 3; index++) {
         uint32_t cache_index = index << 6;
         if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
-          d->valid = 0;
+          printf("Tasklet ID: %d, component index: %d\n", d->tasklet_id, index);
+          for (int i = (row + col - 5) * 192; i < (row + col - 1) * 192; i += 192) {
+            for (int j = i; j < i + 64; j++) {
+              if (j % 8 == 0) {
+                printf("\n");
+              }
+              printf("%d ", MCU_buffer[d->tasklet_id][j]);
+            }
+            printf("\n");
+          }
+          jpegInfo.valid = 0;
           printf("Error: Invalid MCU\n");
           return;
         }
 
         inverse_dct_component(d, cache_index);
 
-        if (d->color_components[index].h_samp_factor == 2) {
+        if (jpegInfo.color_components[index].h_samp_factor == 2) {
           cache_index = 192;
           if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
-            d->valid = 0;
+            jpegInfo.valid = 0;
             printf("Error: Invalid MCU\n");
             return;
           }
           inverse_dct_component(d, cache_index);
         }
 
-        if (d->color_components[index].v_samp_factor == 2) {
+        if (jpegInfo.color_components[index].v_samp_factor == 2) {
           cache_index = 384;
           if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
-            d->valid = 0;
+            jpegInfo.valid = 0;
             printf("Error: Invalid MCU\n");
             return;
           }
           inverse_dct_component(d, cache_index);
         }
 
-        if (d->color_components[index].v_samp_factor == 2 && d->color_components[index].h_samp_factor == 2) {
+        if (jpegInfo.color_components[index].v_samp_factor == 2 &&
+            jpegInfo.color_components[index].h_samp_factor == 2) {
           cache_index = 576;
           if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
-            d->valid = 0;
+            jpegInfo.valid = 0;
             printf("Error: Invalid MCU\n");
             return;
           }
@@ -900,30 +920,30 @@ static void decompress_scanline(JpegDecompressor *d) {
       uint32_t mcu_index = (row + col) * 192;
       uint32_t cache_index;
 
-      if (d->max_v_samp_factor == 2 && d->max_h_samp_factor == 2) {
-        uint32_t mcu_index0 = mcu_index + (d->mcu_width_real + 1) * 192;
+      if (jpegInfo.max_v_samp_factor == 2 && jpegInfo.max_h_samp_factor == 2) {
+        uint32_t mcu_index0 = mcu_index + (jpegInfo.mcu_width_real + 1) * 192;
         cache_index = 576;
         ycbcr_to_rgb_pixel(d, cache_index, 1, 1);
-        mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[mcu_index0], 384);
+        mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index0], 384);
       }
 
-      if (d->max_v_samp_factor == 2) {
-        uint32_t mcu_index0 = mcu_index + d->mcu_width_real * 192;
+      if (jpegInfo.max_v_samp_factor == 2) {
+        uint32_t mcu_index0 = mcu_index + jpegInfo.mcu_width_real * 192;
         cache_index = 384;
         ycbcr_to_rgb_pixel(d, cache_index, 1, 0);
-        mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[mcu_index0], 384);
+        mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index0], 384);
       }
 
-      if (d->max_h_samp_factor == 2) {
+      if (jpegInfo.max_h_samp_factor == 2) {
         uint32_t mcu_index0 = mcu_index + 192;
         cache_index = 192;
         ycbcr_to_rgb_pixel(d, cache_index, 0, 1);
-        mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[mcu_index0], 384);
+        mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index0], 384);
       }
 
       cache_index = 0;
       ycbcr_to_rgb_pixel(d, cache_index, 0, 0);
-      mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[mcu_index], 384);
+      mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index], 384);
     }
   }
 }
@@ -941,7 +961,7 @@ static int read_marker(JpegDecompressor *d) {
   marker = next_marker(d);
   switch (marker) {
     case -1:
-      d->valid = 0;
+      jpegInfo.valid = 0;
       printf("Error: Read past EOF\n");
       break;
 
@@ -970,7 +990,7 @@ static int read_marker(JpegDecompressor *d) {
 
     case M_SOF2:
       // TODO: handle progressive JPEG
-      d->valid = 0;
+      jpegInfo.valid = 0;
       printf("Got progressive JPEG: FF %X, not supported yet\n", marker);
       break;
 
@@ -994,7 +1014,7 @@ static int read_marker(JpegDecompressor *d) {
       break;
 
     default:
-      d->valid = 0;
+      jpegInfo.valid = 0;
       printf("Error: Unhandled marker: FF %X\n", marker);
       break;
   }
@@ -1004,46 +1024,45 @@ static int read_marker(JpegDecompressor *d) {
 
 /**
  * Helper function to print out filled in values of the JPEG decompressor
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
-static void print_jpeg_decompressor(JpegDecompressor *d) {
+static void print_jpeg_decompressor() {
   printf("\n********** DQT **********\n");
   for (int i = 0; i < 4; i++) {
-    if (d->quant_tables[i].exists) {
+    if (jpegInfo.quant_tables[i].exists) {
       printf("Table ID: %d", i);
       for (int j = 0; j < 64; j++) {
         if (j % 8 == 0) {
           printf("\n");
         }
-        printf("%d ", d->quant_tables[i].table[j]);
+        printf("%d ", jpegInfo.quant_tables[i].table[j]);
       }
       printf("\n\n");
     }
   }
 
   printf("********** DRI **********\n");
-  printf("Restart Interval: %d\n", d->restart_interval);
+  printf("Restart Interval: %d\n", jpegInfo.restart_interval);
 
   printf("\n********** SOF **********\n");
-  printf("Width: %d\n", d->image_width);
-  printf("Height: %d\n", d->image_height);
-  printf("Number of color components: %d\n\n", d->num_color_components);
-  for (int i = 0; i < d->num_color_components; i++) {
-    printf("Component ID: %d\n", d->color_components[i].component_id);
-    printf("H-samp factor: %d\n", d->color_components[i].h_samp_factor);
-    printf("V-samp factor: %d\n", d->color_components[i].v_samp_factor);
-    printf("Quantization table ID: %d\n\n", d->color_components[i].quant_table_id);
+  printf("Width: %d\n", jpegInfo.image_width);
+  printf("Height: %d\n", jpegInfo.image_height);
+  printf("Number of color components: %d\n\n", jpegInfo.num_color_components);
+  for (int i = 0; i < jpegInfo.num_color_components; i++) {
+    printf("Component ID: %d\n", jpegInfo.color_components[i].component_id);
+    printf("H-samp factor: %d\n", jpegInfo.color_components[i].h_samp_factor);
+    printf("V-samp factor: %d\n", jpegInfo.color_components[i].v_samp_factor);
+    printf("Quantization table ID: %d\n\n", jpegInfo.color_components[i].quant_table_id);
   }
 
   printf("\n********** DHT **********\n");
   for (int i = 0; i < 2; i++) {
-    if (d->dc_huffman_tables[i].exists) {
+    if (jpegInfo.dc_huffman_tables[i].exists) {
       printf("DC Table ID: %d\n", i);
       for (int j = 0; j < 16; j++) {
         printf("%d: ", j + 1);
-        for (int k = d->dc_huffman_tables[i].valoffset[j]; k < d->dc_huffman_tables[i].valoffset[j + 1]; k++) {
-          printf("%d ", d->dc_huffman_tables[i].huffval[k]);
+        for (int k = jpegInfo.dc_huffman_tables[i].valoffset[j]; k < jpegInfo.dc_huffman_tables[i].valoffset[j + 1];
+             k++) {
+          printf("%d ", jpegInfo.dc_huffman_tables[i].huffval[k]);
         }
         printf("\n");
       }
@@ -1051,12 +1070,13 @@ static void print_jpeg_decompressor(JpegDecompressor *d) {
     }
   }
   for (int i = 0; i < 2; i++) {
-    if (d->ac_huffman_tables[i].exists) {
+    if (jpegInfo.ac_huffman_tables[i].exists) {
       printf("AC Table ID: %d\n", i);
       for (int j = 0; j < 16; j++) {
         printf("%d: ", j + 1);
-        for (int k = d->ac_huffman_tables[i].valoffset[j]; k < d->ac_huffman_tables[i].valoffset[j + 1]; k++) {
-          printf("%d ", d->ac_huffman_tables[i].huffval[k]);
+        for (int k = jpegInfo.ac_huffman_tables[i].valoffset[j]; k < jpegInfo.ac_huffman_tables[i].valoffset[j + 1];
+             k++) {
+          printf("%d ", jpegInfo.ac_huffman_tables[i].huffval[k]);
         }
         printf("\n");
       }
@@ -1065,87 +1085,120 @@ static void print_jpeg_decompressor(JpegDecompressor *d) {
   }
 
   printf("\n********** SOS **********\n");
-  for (int i = 0; i < d->num_color_components; i++) {
-    printf("Component ID: %d\n", d->color_components[i].component_id);
-    printf("DC table ID: %d\n", d->color_components[i].dc_huffman_table_id);
-    printf("AC table ID: %d\n\n", d->color_components[i].ac_huffman_table_id);
+  for (int i = 0; i < jpegInfo.num_color_components; i++) {
+    printf("Component ID: %d\n", jpegInfo.color_components[i].component_id);
+    printf("DC table ID: %d\n", jpegInfo.color_components[i].dc_huffman_table_id);
+    printf("AC table ID: %d\n\n", jpegInfo.color_components[i].ac_huffman_table_id);
   }
-  printf("Start of selection: %d\n", d->ss);
-  printf("End of selection: %d\n", d->se);
-  printf("Successive approximation high: %d\n", d->Ah);
-  printf("Successive approximation low: %d\n\n", d->Al);
+  printf("Start of selection: %d\n", jpegInfo.ss);
+  printf("End of selection: %d\n", jpegInfo.se);
+  printf("Successive approximation high: %d\n", jpegInfo.Ah);
+  printf("Successive approximation low: %d\n\n", jpegInfo.Al);
 
   printf("\n********** BMP **********\n");
-  printf("MCU width: %d\n", d->mcu_width);
-  printf("MCU height: %d\n", d->mcu_height);
-  printf("BMP padding: %d\n", d->padding);
+  printf("MCU width: %d\n", jpegInfo.mcu_width);
+  printf("MCU height: %d\n", jpegInfo.mcu_height);
+  printf("BMP padding: %d\n", jpegInfo.padding);
 }
 
 /**
- * Initialize the JPEG decompressor with default values
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
+ * Initialize global JPEG info with default values
  */
-static void init_jpeg_decompressor(JpegDecompressor *d) {
-  d->valid = 1;
-  d->file_index = -PREFETCH_SIZE;
-  d->cache_index = PREFETCH_SIZE;
+static void init_jpeg_info() {
+  jpegInfo.valid = 1;
 
   for (int i = 0; i < 4; i++) {
-    d->quant_tables[i].exists = 0;
+    jpegInfo.quant_tables[i].exists = 0;
 
     if (i < 2) {
-      d->color_components[i].exists = 0;
-      d->dc_huffman_tables[i].exists = 0;
-      d->ac_huffman_tables[i].exists = 0;
+      jpegInfo.color_components[i].exists = 0;
+      jpegInfo.dc_huffman_tables[i].exists = 0;
+      jpegInfo.ac_huffman_tables[i].exists = 0;
 
     } else if (i < 3) {
-      d->color_components[i].exists = 0;
+      jpegInfo.color_components[i].exists = 0;
     }
   }
 
   // These fields will be filled when reading the JPEG header information
-  d->restart_interval = 0;
-  d->image_height = 0;
-  d->image_width = 0;
-  d->num_color_components = 0;
-  d->ss = 0;
-  d->se = 0;
-  d->Ah = 0;
-  d->Al = 0;
+  jpegInfo.restart_interval = 0;
+  jpegInfo.image_height = 0;
+  jpegInfo.image_width = 0;
+  jpegInfo.num_color_components = 0;
+  jpegInfo.ss = 0;
+  jpegInfo.se = 0;
+  jpegInfo.Ah = 0;
+  jpegInfo.Al = 0;
+
+  // These fields will be used when writing to BMP
+  jpegInfo.mcu_width = 0;
+  jpegInfo.mcu_height = 0;
+  jpegInfo.padding = 0;
+}
+
+/**
+ * Initialize JPEG decompressor with default values
+ *
+ * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
+ */
+static void init_jpeg_decompressor(JpegDecompressor *d) {
+  d->tasklet_id = me();
+
+  int file_index = jpegInfo.image_data_start + jpegInfo.size_per_tasklet * d->tasklet_id;
+  int offset = file_index % 8;
+  d->file_index = file_index - offset - PREFETCH_SIZE;
+  d->cache_index = offset + PREFETCH_SIZE;
+  d->length = jpegInfo.image_data_start + jpegInfo.size_per_tasklet * (d->tasklet_id + 1);
 
   // These fields will be used when decoded Huffman coded bitstream
   d->get_buffer = 0;
   d->bits_left = 0;
-
-  // These fields will be used when writing to BMP
-  d->mcu_width = 0;
-  d->mcu_height = 0;
-  d->padding = 0;
 }
 
 int main() {
   JpegDecompressor decompressor;
-  int res = 1;
-  decompressor.tasklet_id = me();
-
   decompressor.length = input.file_length;
+  jpegInfo.length = decompressor.length;
+
+  if (me() == 0) {
+    int res = 1;
+
+    decompressor.tasklet_id = me();
+    decompressor.file_index = -PREFETCH_SIZE;
+    decompressor.cache_index = PREFETCH_SIZE;
+
+    init_jpeg_info();
+
+    // Check whether file starts with SOI
+    process_header(&decompressor);
+
+    // Continuously read all markers until we reach Huffman coded bitstream
+    while (jpegInfo.valid && res) {
+      res = read_marker(&decompressor);
+    }
+
+    if (!jpegInfo.valid) {
+      printf("Error: Invalid JPEG\n");
+      return 1;
+    }
+
+    jpegInfo.image_data_start = decompressor.file_index + decompressor.cache_index;
+    jpegInfo.size_per_tasklet = (jpegInfo.length - jpegInfo.image_data_start) / NR_TASKLETS;
+    // printf("%d %d %d\n", jpegInfo.image_data_start, jpegInfo.length, jpegInfo.size_per_tasklet);
+
+    // print_jpeg_decompressor();
+
+    output.image_width = jpegInfo.image_width;
+    output.image_height = jpegInfo.image_height;
+    output.padding = jpegInfo.padding;
+    output.mcu_width_real = jpegInfo.mcu_width_real;
+  }
+
+  barrier_wait(&init_barrier);
   init_jpeg_decompressor(&decompressor);
-
-  // Check whether file starts with SOI
-  process_header(&decompressor);
-
-  // Continuously read all markers until we reach Huffman coded bitstream
-  while (decompressor.valid && res) {
-    res = read_marker(&decompressor);
-  }
-
-  if (!decompressor.valid) {
-    printf("Error: Invalid JPEG\n");
-    return 1;
-  }
-
-  // print_jpeg_decompressor(&decompressor);
+  printf("Tasklet: %d, start: %d %d, end: %d\n", decompressor.tasklet_id, decompressor.file_index,
+         decompressor.cache_index, decompressor.length);
+  // printf("Length: %d\n", jpegInfo.length);
 
   // Process Huffman coded bitstream, perform inverse DCT, and convert YCbCr to RGB
   // TODO: divide work amongst tasklets, one way to do this is to divide up the huffman coded bitstream evenly amongst
@@ -1153,15 +1206,39 @@ int main() {
   // end of an MCU block), and then start at the next block. This will allow each tasklet decode around the same amount
   // of bits
   decompress_scanline(&decompressor);
-  if (!decompressor.valid) {
+  if (!jpegInfo.valid) {
     printf("Error: Invalid JPEG\n");
     return 1;
   }
 
-  output.image_width = decompressor.image_width;
-  output.image_height = decompressor.image_height;
-  output.padding = decompressor.padding;
-  output.mcu_width_real = decompressor.mcu_width_real;
+  // printf("Tasklet: %d\n", decompressor.tasklet_id);
+  // for (int i = 0; i < 5; i++) {
+  //   for (int j = 0; j < 1; j++) {
+  //     for (int k = 0; k < 64; k++) {
+  //       if (k % 8 == 0) {
+  //         printf("\n");
+  //       }
+  //       printf("%d ", MCU_buffer[decompressor.tasklet_id][i * 192 + j * 64 + k]);
+  //     }
+  //     printf("\n");
+  //   }
+  // }
+
+  // if (decompressor.tasklet_id == 0) {
+  //   decompress_scanline(&decompressor);
+  //   if (!jpegInfo.valid) {
+  //     printf("Error: Invalid JPEG\n");
+  //     return 1;
+  //   }
+  // } else {
+  //   printf("%d\n", decompressor.tasklet_id);
+  //   int sum = 0;
+  //   while (!eof(&decompressor)) {
+  //     uint8_t readbyte = read_byte(&decompressor);
+  //     sum += readbyte;
+  //   }
+  //   printf("Sum: %d\n", sum);
+  // }
 
   return 0;
 }

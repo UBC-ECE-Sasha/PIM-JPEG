@@ -158,6 +158,46 @@ typedef struct JpegDecompressor {
   uint32_t bits_left;
 } JpegDecompressor;
 
+typedef struct JpegInfo {
+  uint8_t valid;             // indicates whether file is actually a JPEG file
+  uint32_t image_data_start; // index where image data begins in SOS
+  uint32_t length;           // total length of JPEG
+  uint32_t size_per_tasklet; // number of bytes to decode per tasklet
+
+  // from DQT
+  QuantizationTable quant_tables[4];
+
+  // from DRI
+  uint16_t restart_interval;
+
+  // from SOF
+  uint16_t image_height;
+  uint16_t image_width;
+  uint8_t num_color_components;
+  ColorComponentInfo color_components[3];
+
+  // from DHT
+  HuffmanTable dc_huffman_tables[2];
+  HuffmanTable ac_huffman_tables[2];
+
+  // from SOS
+  uint8_t ss; // Start of spectral selection
+  uint8_t se; // End of spectral selection
+  uint8_t Ah; // Successive approximation high
+  uint8_t Al; // Successive approximation low
+
+  // for decoding and writing to BMP
+  uint32_t mcu_height;
+  uint32_t mcu_width;
+  uint32_t padding;
+
+  // used when horizontal or vertical sampling factors are not 1
+  uint32_t mcu_height_real;   // mcu_height + padding, padding must be 0 or 1
+  uint32_t mcu_width_real;    // mcu_width + padding, padding must be 0 or 1
+  uint32_t max_h_samp_factor; // maximum value of horizontal sampling factors amongst all color components
+  uint32_t max_v_samp_factor; // maximum value of vertical sampling factors amongst all color components
+} JpegInfo;
+
 /**
  * MCU has a 2D array. 3 indices for color channels (RGB) and 64 indices the 64 values in an 8x8 MCU
  */

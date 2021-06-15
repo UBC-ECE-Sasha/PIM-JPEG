@@ -1020,17 +1020,17 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
     }
   }
 
-  // for (int i = 10000; i < 10005; i++) {
-  //   for (int j = 0; j < 3; j++) {
-  //     for (int k = 0; k < 64; k++) {
-  //       if (k % 8 == 0) {
-  //         printf("\n");
-  //       }
-  //       printf("%d ", mcus[i].buffer[j][k]);
-  //     }
-  //     printf("\n");
-  //   }
-  // }
+  for (int i = 0; i < 5; i++) {
+    for (int j = 0; j < 1; j++) {
+      for (int k = 0; k < 64; k++) {
+        if (k % 8 == 0) {
+          printf("\n");
+        }
+        printf("%d ", mcus[i].buffer[j][k]);
+      }
+      printf("\n");
+    }
+  }
 
   return mcus;
 }
