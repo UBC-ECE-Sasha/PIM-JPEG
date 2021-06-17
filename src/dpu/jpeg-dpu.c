@@ -846,7 +846,7 @@ static void decompress_scanline(JpegDecompressor *d) {
   for (row = 0; row < jpegInfo.mcu_height; row += jpegInfo.max_v_samp_factor) {
     for (col = 0; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
       if (eof(d)) {
-        goto sync;
+        goto sync0;
       }
 
       for (uint32_t index = 0; index < 3; index++) {
@@ -855,27 +855,22 @@ static void decompress_scanline(JpegDecompressor *d) {
             // uint32_t cache_index = (y * 384) + (x * 192) + (index * 64);
             uint32_t cache_index = 0;
 
-            // Decode Huffman coded bitstream
             // if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
-            //   printf("Row: %d, col: %d, index: %d, y: %d, x: %d\n", row, col, index, y, x);
             //   jpegInfo.valid = 0;
             //   printf("Error: Invalid MCU\n");
             //   return;
             // }
 
-            // TODO: perhaps cache index should just be 0, and then the file_index + cache_index can be stored in the
-            // extra space
+            // Decode Huffman coded bitstream
             while (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
               printf("Tasklet: %d, row: %d, col: %d, index: %d, y: %d, x: %d\n", d->tasklet_id, row, col, index, y, x);
             }
 
             if (i < 64) {
               MCU_buffer_cache[d->tasklet_id][64 + i] = d->file_index + d->cache_index;
+              MCU_buffer_cache[d->tasklet_id][128 + i] = MCU_buffer_cache[d->tasklet_id][0];
               i++;
             }
-
-            // Compute inverse DCT with ANN algorithm
-            // inverse_dct_component(d, cache_index);
 
             uint32_t mcu_index = (((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 + index) * 64;
             mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index], 128);
@@ -899,10 +894,11 @@ static void decompress_scanline(JpegDecompressor *d) {
     }
   }
 
-sync:;
+sync0:;
   // Tasklet i has to overflow to MCUs decoded by tasklet i + 1 for synchronisation
-  printf("Tasklet %d got here! Row: %d, col: %d\n", d->tasklet_id, row, col);
+  printf("Tasklet %d got here\n", d->tasklet_id);
 
+  // The last tasklet cannot overflow, so it returns first
   if (d->tasklet_id == NR_TASKLETS - 1) {
     jpegInfo.mcu_end_index[d->tasklet_id] = (row * jpegInfo.mcu_width_real + col) * 192;
     return;
@@ -912,10 +908,10 @@ sync:;
   int j = 0;
   int counter = 0;
   int temp = jpegInfo.max_h_samp_factor * jpegInfo.max_v_samp_factor + 2;
+
   for (; row < jpegInfo.mcu_height; row += jpegInfo.max_v_samp_factor) {
     for (; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
-      if (counter >= temp) {
-        printf("Here! %d %d\n", counter, i);
+      if (counter >= temp + 1) {
         jpegInfo.mcu_end_index[d->tasklet_id] = (row * jpegInfo.mcu_width_real + col) * 192;
         jpegInfo.mcu_start_index[d->tasklet_id + 1] = i * 64;
         goto sync1;
@@ -931,7 +927,6 @@ sync:;
 
             short index0 = d->file_index + d->cache_index;
             short index1 = MCU_buffer_cache[d->tasklet_id + 1][64 + i];
-            // printf("%d %d\n", index0, index1);
 
             uint32_t mcu_index = (((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 + index) * 64;
             mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index], 128);
@@ -944,14 +939,18 @@ sync:;
 
               while (index0 > index1) {
                 index1 = MCU_buffer_cache[d->tasklet_id + 1][64 + i];
-                // printf("%d %d\n", index0, index1);
                 i++;
               }
 
               if (index0 == index1) {
+                jpegInfo.dc_offset[d->tasklet_id][index] =
+                    MCU_buffer_cache[d->tasklet_id][0] - MCU_buffer_cache[d->tasklet_id + 1][128 + i];
                 counter++;
               }
             } else {
+              jpegInfo.dc_offset[d->tasklet_id][index] =
+                  MCU_buffer_cache[d->tasklet_id][0] - MCU_buffer_cache[d->tasklet_id + 1][128 + i];
+
               counter++;
               i++;
             }
@@ -968,13 +967,25 @@ sync1:;
   }
 
   uint32_t index = jpegInfo.mcu_end_index[0];
+  int dc_offset[3] = {0};
   for (i = 1; i < NR_TASKLETS; i++) {
+    int k = 0;
+    dc_offset[0] += jpegInfo.dc_offset[i - 1][0];
+    dc_offset[1] += jpegInfo.dc_offset[i - 1][1];
+    dc_offset[2] += jpegInfo.dc_offset[i - 1][2];
+
     for (j = jpegInfo.mcu_start_index[i]; j < jpegInfo.mcu_end_index[i]; j++) {
-      MCU_buffer[0][index] = MCU_buffer[i][j];
+      if (j % 64 == 0) {
+        MCU_buffer[0][index] = MCU_buffer[i][j] + dc_offset[k];
+        k = (k + 1) % 3;
+      } else {
+        MCU_buffer[0][index] = MCU_buffer[i][j];
+      }
       index++;
     }
   }
 
+  // TODO: remove later
   for (row = 0; row < jpegInfo.mcu_height; row += jpegInfo.max_v_samp_factor) {
     for (col = 0; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
       for (uint32_t index = 0; index < 3; index++) {
@@ -1200,6 +1211,11 @@ static void init_jpeg_info() {
   for (int i = 0; i < NR_TASKLETS; i++) {
     jpegInfo.mcu_end_index[i] = 0;
     jpegInfo.mcu_start_index[i] = 0;
+    if (i < NR_TASKLETS - 1) {
+      jpegInfo.dc_offset[i][0] = 0;
+      jpegInfo.dc_offset[i][1] = 0;
+      jpegInfo.dc_offset[i][2] = 0;
+    }
   }
 }
 

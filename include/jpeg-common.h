@@ -203,6 +203,7 @@ typedef struct JpegInfo {
 
   uint32_t mcu_end_index[NR_TASKLETS];
   uint32_t mcu_start_index[NR_TASKLETS];
+  int dc_offset[NR_TASKLETS - 1][3];
 } JpegInfo;
 
 /**
