@@ -201,9 +201,12 @@ typedef struct JpegInfo {
   uint32_t max_h_samp_factor; // maximum value of horizontal sampling factors amongst all color components
   uint32_t max_v_samp_factor; // maximum value of vertical sampling factors amongst all color components
 
-  uint32_t mcu_end_index[NR_TASKLETS];
-  uint32_t mcu_start_index[NR_TASKLETS];
-  int dc_offset[NR_TASKLETS - 1][3];
+  uint32_t mcu_end_index[NR_TASKLETS];   // end index of each tasklet in the 2D MRAM MCU buffer
+  uint32_t mcu_start_index[NR_TASKLETS]; // start index of each tasklet in the 2D MRAM MCU buffer
+  int dc_offset[NR_TASKLETS - 1][3];     // offset to the 3 DC coefficients from tasklet i to tasklet i + 1
+  uint32_t rows_per_mcu;
+  // uint32_t overall_end_index;            // end index after combining all decoded MCUs
+  // uint32_t mcus_per_tasklet;             // number of MCUs to do idct and ycbcr to rgb for each tasklet
 } JpegInfo;
 
 /**
