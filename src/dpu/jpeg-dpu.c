@@ -974,14 +974,14 @@ sync1:;
     dc_offset[1] += jpegInfo.dc_offset[i - 1][1];
     dc_offset[2] += jpegInfo.dc_offset[i - 1][2];
 
-    for (j = jpegInfo.mcu_start_index[i]; j < jpegInfo.mcu_end_index[i]; j++) {
-      if (j % 64 == 0) {
-        MCU_buffer[0][index] = MCU_buffer[i][j] + dc_offset[k];
-        k = (k + 1) % 3;
-      } else {
-        MCU_buffer[0][index] = MCU_buffer[i][j];
+    for (j = jpegInfo.mcu_start_index[i]; j < jpegInfo.mcu_end_index[i]; j += 64, index += 64) {
+      mram_read(&MCU_buffer[i][j], &MCU_buffer_cache[0][0], 128);
+      MCU_buffer_cache[0][0] += dc_offset[k] - 50;
+      mram_write(&MCU_buffer_cache[0][0], &MCU_buffer[0][index], 128);
+      k++;
+      if (k == 3) {
+        k = 0;
       }
-      index++;
     }
   }
 
