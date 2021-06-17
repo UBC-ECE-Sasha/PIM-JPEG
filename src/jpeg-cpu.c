@@ -1010,27 +1010,27 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
       }
 
       // Convert from YCbCr to RGB
-      short(*cbcr)[64] = mcus[row * d->mcu_width_real + col].buffer;
-      for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
-        for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
-          short(*buffer)[64] = mcus[(row + y) * d->mcu_width_real + (col + x)].buffer;
-          ycbcr_to_rgb_pixel(buffer, cbcr, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
-        }
-      }
+      // short(*cbcr)[64] = mcus[row * d->mcu_width_real + col].buffer;
+      // for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
+      //   for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
+      //     short(*buffer)[64] = mcus[(row + y) * d->mcu_width_real + (col + x)].buffer;
+      //     ycbcr_to_rgb_pixel(buffer, cbcr, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
+      //   }
+      // }
     }
   }
 
-  for (int i = 0; i < 5; i++) {
-    for (int j = 0; j < 1; j++) {
-      for (int k = 0; k < 64; k++) {
-        if (k % 8 == 0) {
-          printf("\n");
-        }
-        printf("%d ", mcus[i].buffer[j][k]);
-      }
-      printf("\n");
-    }
-  }
+  // for (int i = 0; i < 5; i++) {
+  //   for (int j = 0; j < 1; j++) {
+  //     for (int k = 0; k < 64; k++) {
+  //       if (k % 8 == 0) {
+  //         printf("\n");
+  //       }
+  //       printf("%d ", mcus[i].buffer[j][k]);
+  //     }
+  //     printf("\n");
+  //   }
+  // }
 
   return mcus;
 }

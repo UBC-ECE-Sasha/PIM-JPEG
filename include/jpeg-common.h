@@ -202,6 +202,7 @@ typedef struct JpegInfo {
   uint32_t max_v_samp_factor; // maximum value of vertical sampling factors amongst all color components
 
   uint32_t mcu_end_index[NR_TASKLETS];
+  uint32_t mcu_start_index[NR_TASKLETS];
 } JpegInfo;
 
 /**

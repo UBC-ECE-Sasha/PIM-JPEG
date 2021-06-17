@@ -550,7 +550,6 @@ static int decode_mcu(JpegDecompressor *d, uint32_t cache_index, uint32_t compon
   // Get DC value for this MCU block
   uint8_t dc_length = huff_decode(d, dc_table);
   if (dc_length == (uint8_t)-1) {
-    printf("Tasklet ID: %d, index: %d, dc_length: %d\n", d->tasklet_id, d->file_index + d->cache_index, dc_length);
     printf("Error: Invalid DC code\n");
     return -1;
   }
@@ -788,7 +787,7 @@ static void ycbcr_to_rgb_pixel(JpegDecompressor *d, uint32_t cache_index, int v,
   int max_v = jpegInfo.max_v_samp_factor;
   int max_h = jpegInfo.max_h_samp_factor;
 
-  // Iterating from bottom right to top leftbecause otherwise the pixel data will get overwritten
+  // Iterating from bottom right to top left because otherwise the pixel data will get overwritten
   for (int y = 7; y >= 0; y--) {
     for (int x = 7; x >= 0; x--) {
       uint32_t pixel = cache_index + y * 8 + x;
@@ -841,110 +840,172 @@ static void ycbcr_to_rgb_pixel(JpegDecompressor *d, uint32_t cache_index, int v,
 static void decompress_scanline(JpegDecompressor *d) {
   short previous_dcs[3] = {0};
   uint32_t restart_interval = jpegInfo.restart_interval * jpegInfo.max_h_samp_factor * jpegInfo.max_v_samp_factor;
-  uint32_t total_rows = jpegInfo.mcu_height * jpegInfo.mcu_width_real;
-  uint32_t row_increment = jpegInfo.max_v_samp_factor * jpegInfo.mcu_width_real;
+  uint32_t row, col;
+  int i = 0;
 
-  for (uint32_t row = 0; row < total_rows; row += row_increment) {
-    for (uint32_t col = 0; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
+  for (row = 0; row < jpegInfo.mcu_height; row += jpegInfo.max_v_samp_factor) {
+    for (col = 0; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
       if (eof(d)) {
-        jpegInfo.mcu_end_index[d->tasklet_id] = (row + col) * 192;
-        // printf("Tasklet %d reached end of length\n", d->tasklet_id);
-        return;
+        goto sync;
       }
-      // if (restart_interval != 0 && (row * d->mcu_width_real + col) % restart_interval == 0) {
-      //   previous_dcs[0] = 0;
-      //   previous_dcs[1] = 0;
-      //   previous_dcs[2] = 0;
 
-      //   // Align get buffer to next byte
-      //   uint32_t offset = d->bits_left % 8;
-      //   if (offset != 0) {
-      //     d->get_buffer <<= offset;
-      //     d->bits_left -= offset;
-      //   }
-      // }
-
-      // Decode Huffman coded bitstream and compute inverse DCT with ANN algorithm
       for (uint32_t index = 0; index < 3; index++) {
-        uint32_t cache_index = index << 6;
-        if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
-          // printf("Tasklet ID: %d, component index: %d\n", d->tasklet_id, index);
-          // for (int i = (row + col - 5) * 192; i < (row + col - 1) * 192; i += 192) {
-          //   for (int j = i; j < i + 64; j++) {
-          //     if (j % 8 == 0) {
-          //       printf("\n");
-          //     }
-          //     printf("%d ", MCU_buffer[d->tasklet_id][j]);
-          //   }
-          //   printf("\n");
-          // }
-          jpegInfo.valid = 0;
-          printf("Error: Invalid MCU\n");
-          return;
-        }
+        for (uint32_t y = 0; y < jpegInfo.color_components[index].v_samp_factor; y++) {
+          for (uint32_t x = 0; x < jpegInfo.color_components[index].h_samp_factor; x++) {
+            // uint32_t cache_index = (y * 384) + (x * 192) + (index * 64);
+            uint32_t cache_index = 0;
 
-        inverse_dct_component(d, cache_index);
+            // Decode Huffman coded bitstream
+            // if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
+            //   printf("Row: %d, col: %d, index: %d, y: %d, x: %d\n", row, col, index, y, x);
+            //   jpegInfo.valid = 0;
+            //   printf("Error: Invalid MCU\n");
+            //   return;
+            // }
 
-        if (jpegInfo.color_components[index].h_samp_factor == 2) {
-          cache_index = 192;
-          if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
-            jpegInfo.valid = 0;
-            printf("Error: Invalid MCU\n");
-            return;
+            // TODO: perhaps cache index should just be 0, and then the file_index + cache_index can be stored in the
+            // extra space
+            while (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
+              printf("Tasklet: %d, row: %d, col: %d, index: %d, y: %d, x: %d\n", d->tasklet_id, row, col, index, y, x);
+            }
+
+            if (i < 64) {
+              MCU_buffer_cache[d->tasklet_id][64 + i] = d->file_index + d->cache_index;
+              i++;
+            }
+
+            // Compute inverse DCT with ANN algorithm
+            // inverse_dct_component(d, cache_index);
+
+            uint32_t mcu_index = (((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 + index) * 64;
+            mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index], 128);
           }
-          inverse_dct_component(d, cache_index);
-        }
-
-        if (jpegInfo.color_components[index].v_samp_factor == 2) {
-          cache_index = 384;
-          if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
-            jpegInfo.valid = 0;
-            printf("Error: Invalid MCU\n");
-            return;
-          }
-          inverse_dct_component(d, cache_index);
-        }
-
-        if (jpegInfo.color_components[index].v_samp_factor == 2 &&
-            jpegInfo.color_components[index].h_samp_factor == 2) {
-          cache_index = 576;
-          if (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
-            jpegInfo.valid = 0;
-            printf("Error: Invalid MCU\n");
-            return;
-          }
-          inverse_dct_component(d, cache_index);
         }
       }
 
       // Convert from YCbCr to RGB
-      uint32_t mcu_index = (row + col) * 192;
-      uint32_t cache_index;
+      // for (int y = jpegInfo.max_v_samp_factor - 1; y >= 0; y--) {
+      //   for (int x = jpegInfo.max_h_samp_factor - 1; x >= 0; x--) {
+      //     // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
+      //     // + (current col + horizontal sampling)
+      //     uint32_t mcu_index = ((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 * 64;
+      //     uint32_t cache_index = (y * 384) + (x * 192);
 
-      if (jpegInfo.max_v_samp_factor == 2 && jpegInfo.max_h_samp_factor == 2) {
-        uint32_t mcu_index0 = mcu_index + (jpegInfo.mcu_width_real + 1) * 192;
-        cache_index = 576;
-        ycbcr_to_rgb_pixel(d, cache_index, 1, 1);
-        mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index0], 384);
+      //     ycbcr_to_rgb_pixel(d, cache_index, y, x);
+
+      //     mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index], 384);
+      //   }
+      // }
+    }
+  }
+
+sync:;
+  // Tasklet i has to overflow to MCUs decoded by tasklet i + 1 for synchronisation
+  printf("Tasklet %d got here! Row: %d, col: %d\n", d->tasklet_id, row, col);
+
+  if (d->tasklet_id == NR_TASKLETS - 1) {
+    jpegInfo.mcu_end_index[d->tasklet_id] = (row * jpegInfo.mcu_width_real + col) * 192;
+    return;
+  }
+
+  i = 0;
+  int j = 0;
+  int counter = 0;
+  int temp = jpegInfo.max_h_samp_factor * jpegInfo.max_v_samp_factor + 2;
+  for (; row < jpegInfo.mcu_height; row += jpegInfo.max_v_samp_factor) {
+    for (; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
+      if (counter >= temp) {
+        printf("Here! %d %d\n", counter, i);
+        jpegInfo.mcu_end_index[d->tasklet_id] = (row * jpegInfo.mcu_width_real + col) * 192;
+        jpegInfo.mcu_start_index[d->tasklet_id + 1] = i * 64;
+        goto sync1;
       }
 
-      if (jpegInfo.max_v_samp_factor == 2) {
-        uint32_t mcu_index0 = mcu_index + jpegInfo.mcu_width_real * 192;
-        cache_index = 384;
-        ycbcr_to_rgb_pixel(d, cache_index, 1, 0);
-        mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index0], 384);
+      for (uint32_t index = 0; index < 3; index++) {
+        for (uint32_t y = 0; y < jpegInfo.color_components[index].v_samp_factor; y++) {
+          for (uint32_t x = 0; x < jpegInfo.color_components[index].h_samp_factor; x++) {
+            uint32_t cache_index = 0;
+            while (decode_mcu(d, cache_index, index, &previous_dcs[index]) != 0) {
+              printf("This shouldn't ever print\n");
+            }
+
+            short index0 = d->file_index + d->cache_index;
+            short index1 = MCU_buffer_cache[d->tasklet_id + 1][64 + i];
+            // printf("%d %d\n", index0, index1);
+
+            uint32_t mcu_index = (((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 + index) * 64;
+            mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index], 128);
+
+            if (index0 < index1) {
+              counter = 0;
+            } else if (index0 > index1) {
+              counter = 0;
+              i++;
+
+              while (index0 > index1) {
+                index1 = MCU_buffer_cache[d->tasklet_id + 1][64 + i];
+                // printf("%d %d\n", index0, index1);
+                i++;
+              }
+
+              if (index0 == index1) {
+                counter++;
+              }
+            } else {
+              counter++;
+              i++;
+            }
+          }
+        }
+      }
+    }
+  }
+
+sync1:;
+  // Tasklet 0 does a one pass through all MCUs to adjust DC coefficients
+  if (d->tasklet_id != 0) {
+    return;
+  }
+
+  uint32_t index = jpegInfo.mcu_end_index[0];
+  for (i = 1; i < NR_TASKLETS; i++) {
+    for (j = jpegInfo.mcu_start_index[i]; j < jpegInfo.mcu_end_index[i]; j++) {
+      MCU_buffer[0][index] = MCU_buffer[i][j];
+      index++;
+    }
+  }
+
+  for (row = 0; row < jpegInfo.mcu_height; row += jpegInfo.max_v_samp_factor) {
+    for (col = 0; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
+      for (uint32_t index = 0; index < 3; index++) {
+        for (uint32_t y = 0; y < jpegInfo.color_components[index].v_samp_factor; y++) {
+          for (uint32_t x = 0; x < jpegInfo.color_components[index].h_samp_factor; x++) {
+            uint32_t mcu_index = (((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 + index) * 64;
+            uint32_t cache_index = 0;
+            mram_read(&MCU_buffer[d->tasklet_id][mcu_index], &MCU_buffer_cache[d->tasklet_id][cache_index], 128);
+
+            // Compute inverse DCT with ANN algorithm
+            inverse_dct_component(d, cache_index);
+
+            mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index], 128);
+          }
+        }
       }
 
-      if (jpegInfo.max_h_samp_factor == 2) {
-        uint32_t mcu_index0 = mcu_index + 192;
-        cache_index = 192;
-        ycbcr_to_rgb_pixel(d, cache_index, 0, 1);
-        mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index0], 384);
-      }
+      // Convert from YCbCr to RGB
+      for (int y = jpegInfo.max_v_samp_factor - 1; y >= 0; y--) {
+        for (int x = jpegInfo.max_h_samp_factor - 1; x >= 0; x--) {
+          // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
+          // + (current col + horizontal sampling)
+          uint32_t mcu_index = ((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 * 64;
+          uint32_t cache_index = 0;
+          mram_read(&MCU_buffer[d->tasklet_id][mcu_index], &MCU_buffer_cache[d->tasklet_id][cache_index], 384);
 
-      cache_index = 0;
-      ycbcr_to_rgb_pixel(d, cache_index, 0, 0);
-      mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index], 384);
+          ycbcr_to_rgb_pixel(d, cache_index, y, x);
+
+          mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[d->tasklet_id][mcu_index], 384);
+        }
+      }
     }
   }
 }
@@ -1138,6 +1199,7 @@ static void init_jpeg_info() {
 
   for (int i = 0; i < NR_TASKLETS; i++) {
     jpegInfo.mcu_end_index[i] = 0;
+    jpegInfo.mcu_start_index[i] = 0;
   }
 }
 
@@ -1147,8 +1209,6 @@ static void init_jpeg_info() {
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static void init_jpeg_decompressor(JpegDecompressor *d) {
-  d->tasklet_id = me();
-
   int file_index = jpegInfo.image_data_start + jpegInfo.size_per_tasklet * d->tasklet_id;
   // Calculating offset so that mram_read is 8 byte aligned
   int offset = file_index % 8;
@@ -1156,7 +1216,7 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
   d->cache_index = offset + PREFETCH_SIZE;
   d->length = jpegInfo.image_data_start + jpegInfo.size_per_tasklet * (d->tasklet_id + 1);
 
-  // These fields will be used when decoded Huffman coded bitstream
+  // These fields will be used when decoding Huffman coded bitstream
   d->get_buffer = 0;
   d->bits_left = 0;
 }
@@ -1164,9 +1224,10 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
 int main() {
   JpegDecompressor decompressor;
   decompressor.length = input.file_length;
+  decompressor.tasklet_id = me();
   jpegInfo.length = decompressor.length;
 
-  if (me() == 0) {
+  if (decompressor.tasklet_id == 0) {
     int res = 1;
 
     decompressor.tasklet_id = me();
@@ -1199,31 +1260,21 @@ int main() {
     output.mcu_width_real = jpegInfo.mcu_width_real;
   }
 
+  // All tasklets should wait until tasklet 0 has finished reading all JPEG markers
   barrier_wait(&init_barrier);
+
   init_jpeg_decompressor(&decompressor);
   // printf("Tasklet: %d, start: %d %d, end: %d\n", decompressor.tasklet_id, decompressor.file_index,
   //        decompressor.cache_index, decompressor.length);
 
   // Process Huffman coded bitstream, perform inverse DCT, and convert YCbCr to RGB
   decompress_scanline(&decompressor);
-  // if (!jpegInfo.valid) {
-  //   printf("Error: Invalid JPEG\n");
-  //   return 1;
-  // }
+  if (!jpegInfo.valid) {
+    // printf("Error: Invalid JPEG\n");
+    return 1;
+  }
 
   // printf("Tasklet %d end index: %d\n", decompressor.tasklet_id, jpegInfo.mcu_end_index[decompressor.tasklet_id]);
-
-  // TODO: use mram_read and mram_write instead of implicit read and write
-  // Combine results
-  if (decompressor.tasklet_id == 0) {
-    uint32_t index = jpegInfo.mcu_end_index[0];
-    for (int i = 1; i < NR_TASKLETS; i++) {
-      for (int j = 0; j < jpegInfo.mcu_end_index[i]; j++) {
-        MCU_buffer[0][index] = MCU_buffer[i][j];
-        index++;
-      }
-    }
-  }
 
   // printf("Tasklet: %d\n", decompressor.tasklet_id);
   // for (int i = 0; i < 5; i++) {
