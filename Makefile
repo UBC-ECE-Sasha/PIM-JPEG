@@ -14,7 +14,7 @@ endif
 
 # Default NR_DPUS and NR_TASKLETS
 NR_DPUS = 1
-NR_TASKLETS = 12
+NR_TASKLETS = 2
 
 # Bulk (dpu_prepare_xfer) is default
 BULK = 1
