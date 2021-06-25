@@ -10,7 +10,7 @@ __host dpu_input_t input;
 __host dpu_output_t output;
 __mram_noinit char file_buffer[16 << 20];
 // About 32MB
-__mram_noinit short MCU_buffer[NR_TASKLETS][(87380 * 3 * 64) / NR_TASKLETS];
+__mram_noinit short MCU_buffer[NR_TASKLETS][16776960 / NR_TASKLETS];
 
 JpegInfo jpegInfo;
 
@@ -22,6 +22,9 @@ BARRIER_INIT(idct_barrier, NR_TASKLETS);
 #define PREWRITE_SIZE 768
 __dma_aligned char file_buffer_cache[NR_TASKLETS][PREFETCH_SIZE];
 __dma_aligned short MCU_buffer_cache[NR_TASKLETS][PREWRITE_SIZE];
+
+#define INDEX_OFFSET 64
+#define DC_COEFF_OFFSET 192
 
 /**
  * Helper array for filling in quantization table in zigzag order
@@ -861,9 +864,9 @@ static void decompress_scanline(JpegDecompressor *d) {
               printf("Tasklet: %d, row: %d, col: %d, index: %d, y: %d, x: %d\n", d->tasklet_id, row, col, index, y, x);
             }
 
-            if (i < 64) {
-              MCU_buffer_cache[d->tasklet_id][64 + i] = d->file_index + d->cache_index;
-              MCU_buffer_cache[d->tasklet_id][128 + i] = MCU_buffer_cache[d->tasklet_id][0];
+            if (i < 128) {
+              MCU_buffer_cache[d->tasklet_id][INDEX_OFFSET + i] = d->file_index + d->cache_index;
+              MCU_buffer_cache[d->tasklet_id][DC_COEFF_OFFSET + i] = MCU_buffer_cache[d->tasklet_id][0];
               i++;
             }
 
@@ -878,6 +881,11 @@ static void decompress_scanline(JpegDecompressor *d) {
 sync0:;
   // Tasklet i has to overflow to MCUs decoded by tasklet i + 1 for synchronisation
   // The last tasklet cannot overflow, so it returns first
+  uint32_t mcu_index = (row * jpegInfo.mcu_width_real + col) * 192;
+  if (mcu_index > 16776960 / NR_TASKLETS) {
+    printf("Tasklet %d exceeded buffer size limit, output image is most likely malformed\n", d->tasklet_id);
+  }
+
   if (d->tasklet_id == NR_TASKLETS - 1) {
     jpegInfo.mcu_end_index[d->tasklet_id] = (row * jpegInfo.mcu_width_real + col) * 192;
     return;
@@ -918,18 +926,18 @@ sync0:;
               i++;
 
               while (index0 > index1) {
-                index1 = MCU_buffer_cache[d->tasklet_id + 1][64 + i];
+                index1 = MCU_buffer_cache[d->tasklet_id + 1][INDEX_OFFSET + i];
                 i++;
               }
 
               if (index0 == index1) {
                 jpegInfo.dc_offset[d->tasklet_id][index] =
-                    MCU_buffer_cache[d->tasklet_id][0] - MCU_buffer_cache[d->tasklet_id + 1][128 + i];
+                    MCU_buffer_cache[d->tasklet_id][0] - MCU_buffer_cache[d->tasklet_id + 1][DC_COEFF_OFFSET + i];
                 counter++;
               }
             } else {
               jpegInfo.dc_offset[d->tasklet_id][index] =
-                  MCU_buffer_cache[d->tasklet_id][0] - MCU_buffer_cache[d->tasklet_id + 1][128 + i];
+                  MCU_buffer_cache[d->tasklet_id][0] - MCU_buffer_cache[d->tasklet_id + 1][DC_COEFF_OFFSET + i];
 
               counter++;
               i++;
@@ -1306,10 +1314,10 @@ int main() {
     return 1;
   }
 
-  // // All tasklets should wait until tasklet 0 has finished adjusting the DC coefficients
-  // barrier_wait(&idct_barrier);
+  // All tasklets should wait until tasklet 0 has finished adjusting the DC coefficients
+  barrier_wait(&idct_barrier);
 
-  // inverse_dct_convert(&decompressor);
+  inverse_dct_convert(&decompressor);
 
   return 0;
 }
