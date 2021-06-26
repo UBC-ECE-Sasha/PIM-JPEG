@@ -13,6 +13,8 @@
 #define NR_TASKLETS 16
 #endif
 
+#define MAX_HUFFMAN_TABLES 2
+
 /**
  * JPEG Markers: CCITT Rec T.81 page 32
  */
@@ -146,19 +148,8 @@ typedef struct JpegDecompressor {
   uint32_t max_h_samp_factor; // maximum value of horizontal sampling factors amongst all color components
   uint32_t max_v_samp_factor; // maximum value of vertical sampling factors amongst all color components
 
-  // uint16_t restarts_left;
-  // uint32_t num_restart_intervals;
-
-  /* updated each scan */
-  // uint8_t first_scan;
-  // uint8_t component_sel;
-  // uint8_t coding_table;
-  // uint8_t MCUs_per_row;
-  // uint32_t rows_per_scan;
-  // uint8_t blocks_per_MCU;
-
   // bit buffer
-  uint32_t get_buffer;
+  uint32_t bit_buffer;
   uint32_t bits_left;
 } JpegDecompressor;
 
@@ -181,8 +172,8 @@ typedef struct JpegInfo {
   ColorComponentInfo color_components[3];
 
   // from DHT
-  HuffmanTable dc_huffman_tables[2];
-  HuffmanTable ac_huffman_tables[2];
+  HuffmanTable dc_huffman_tables[MAX_HUFFMAN_TABLES];
+  HuffmanTable ac_huffman_tables[MAX_HUFFMAN_TABLES];
 
   // from SOS
   uint8_t ss; // Start of spectral selection
@@ -205,8 +196,6 @@ typedef struct JpegInfo {
   uint32_t mcu_start_index[NR_TASKLETS]; // start index of each tasklet in the 2D MRAM MCU buffer
   int dc_offset[NR_TASKLETS - 1][3];     // offset to the 3 DC coefficients from tasklet i to tasklet i + 1
   uint32_t rows_per_mcu;
-  uint32_t overall_end_index; // end index after combining all decoded MCUs
-  uint32_t mcus_per_tasklet;  // number of MCUs to do idct and ycbcr to rgb for each tasklet
 } JpegInfo;
 
 /**

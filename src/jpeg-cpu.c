@@ -514,12 +514,12 @@ static int get_bits(JpegDecompressor *d, uint32_t num_bits) {
     }
 
     // Add the new bits to the buffer (MSB aligned)
-    d->get_buffer |= c << (32 - 8 - d->bits_left);
+    d->bit_buffer |= c << (32 - 8 - d->bits_left);
     d->bits_left += 8;
   }
 
-  temp = d->get_buffer >> (32 - num_bits);
-  d->get_buffer <<= num_bits;
+  temp = d->bit_buffer >> (32 - num_bits);
+  d->bit_buffer <<= num_bits;
   d->bits_left -= num_bits;
   return temp;
 }
@@ -979,7 +979,7 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
         // Align get buffer to next byte
         uint32_t offset = d->bits_left % 8;
         if (offset != 0) {
-          d->get_buffer <<= offset;
+          d->bit_buffer <<= offset;
           d->bits_left -= offset;
         }
       }
@@ -1003,20 +1003,20 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
 #if USE_FLOAT
             inverse_dct_component_float(buffer);
 #else
-            // inverse_dct_component(buffer);
+            inverse_dct_component(buffer);
 #endif
           }
         }
       }
 
       // Convert from YCbCr to RGB
-      // short(*cbcr)[64] = mcus[row * d->mcu_width_real + col].buffer;
-      // for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
-      //   for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
-      //     short(*buffer)[64] = mcus[(row + y) * d->mcu_width_real + (col + x)].buffer;
-      //     ycbcr_to_rgb_pixel(buffer, cbcr, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
-      //   }
-      // }
+      short(*cbcr)[64] = mcus[row * d->mcu_width_real + col].buffer;
+      for (int y = d->max_v_samp_factor - 1; y >= 0; y--) {
+        for (int x = d->max_h_samp_factor - 1; x >= 0; x--) {
+          short(*buffer)[64] = mcus[(row + y) * d->mcu_width_real + (col + x)].buffer;
+          ycbcr_to_rgb_pixel(buffer, cbcr, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
+        }
+      }
     }
   }
 
@@ -1221,7 +1221,7 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
   d->Al = 0;
 
   // These fields will be used when decoded Huffman coded bitstream
-  d->get_buffer = 0;
+  d->bit_buffer = 0;
   d->bits_left = 0;
 
   // These fields will be used when writing to BMP
