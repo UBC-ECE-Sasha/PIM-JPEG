@@ -448,11 +448,27 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     DPU_FOREACH(dpus, dpu) {
       DPU_ASSERT(dpu_copy_from(dpu, "output", 0, &dpu_output, sizeof(dpu_output_t)));
       DPU_ASSERT(dpu_copy_from(dpu, "MCU_buffer", 0, MCU_buffer,
-                               sizeof(short) * dpu_output.image_height * dpu_output.image_width * 3));
+                               sizeof(short) * (dpu_output.image_height + (8 - dpu_output.image_height % 8)) *
+                                   (dpu_output.image_width + (8 - dpu_output.image_width % 8)) * 3));
     }
     printf("Image dimensions: %d x %d\n", dpu_output.image_width, dpu_output.image_height);
     printf("Image padding: %d\n", dpu_output.padding);
     printf("MCU width real: %d\n", dpu_output.mcu_width_real);
+
+    int row = ((dpu_output.image_height + 7) / 8) - 1;
+    int mcu_width = ((dpu_output.image_width + 7) / 8);
+    // for (int col = 0; col < mcu_width / 2; col++) {
+    //   for (int color_index = 0; color_index < 3; color_index++) {
+    //     for (int x = 0; x < 64; x++) {
+    //       if (x % 8 == 0) {
+    //         printf("\n");
+    //       }
+    //       int mcu_index = ((row * mcu_width + col) * 3 + color_index) << 6;
+    //       printf("%d ", MCU_buffer[mcu_index + x]);
+    //     }
+    //     printf("\n");
+    //   }
+    // }
 
     // Now write the decoded data out as BMP
     BmpObject image;

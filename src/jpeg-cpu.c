@@ -1020,19 +1020,6 @@ static MCU *decompress_scanline(JpegDecompressor *d) {
     }
   }
 
-  int temp = 98 * d->mcu_width_real + 106;
-  for (int i = temp; i < temp + 50; i++) {
-    for (int j = 0; j < 3; j++) {
-      for (int k = 0; k < 64; k++) {
-        if (k % 8 == 0) {
-          printf("\n");
-        }
-        printf("%d ", mcus[i].buffer[j][k]);
-      }
-      printf("\n");
-    }
-  }
-
   return mcus;
 }
 
