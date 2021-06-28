@@ -61,7 +61,9 @@ const uint8_t ZIGZAG_ORDER[] = {0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 
  *
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
-static int eof(JpegDecompressor *d) { return (d->ptr >= d->data + d->length); }
+static int eof(JpegDecompressor *d) {
+  return (d->ptr >= d->data + d->length);
+}
 
 /**
  * Helper function to read a byte from the file
@@ -170,7 +172,7 @@ static int next_marker(JpegDecompressor *d) {
  *
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
-static void process_header(JpegDecompressor *d) {
+static void check_start_of_image(JpegDecompressor *d) {
   uint8_t c1 = 0, c2 = 0;
 
   if (!eof(d)) {
@@ -563,7 +565,7 @@ static int decode_mcu(JpegDecompressor *d, int component_index, short *buffer, s
 
   // Get DC value for this MCU block
   uint8_t dc_length = huff_decode(d, dc_table);
-  if (dc_length == (uint8_t)-1) {
+  if (dc_length == (uint8_t) -1) {
     fprintf(stderr, "Error: Invalid DC code\n");
     return -1;
   }
@@ -586,7 +588,7 @@ static int decode_mcu(JpegDecompressor *d, int component_index, short *buffer, s
   int i = 1;
   while (i < 64) {
     uint8_t ac_length = huff_decode(d, ac_table);
-    if (ac_length == (uint8_t)-1) {
+    if (ac_length == (uint8_t) -1) {
       fprintf(stderr, "Error: Invalid AC code\n");
       return -1;
     }
@@ -965,7 +967,7 @@ static void ycbcr_to_rgb_pixel(short buffer[3][64], short cbcr[3][64], int max_v
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static MCU *decompress_scanline(JpegDecompressor *d) {
-  MCU *mcus = (MCU *)malloc((d->mcu_height_real * d->mcu_width_real) * sizeof(MCU));
+  MCU *mcus = (MCU *) malloc((d->mcu_height_real * d->mcu_width_real) * sizeof(MCU));
   short previous_dcs[3] = {0};
   uint32_t restart_interval = d->restart_interval * d->max_h_samp_factor * d->max_v_samp_factor;
 
@@ -1246,7 +1248,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
 #endif
 
   // Check whether file starts with SOI
-  process_header(&decompressor);
+  check_start_of_image(&decompressor);
 
   // Continuously read all markers until we reach Huffman coded bitstream
   while (decompressor.valid && res) {
@@ -1300,7 +1302,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
 
   image.win_header.width = decompressor.image_width;
   image.win_header.height = decompressor.image_height;
-  ptr = (uint8_t *)malloc(decompressor.image_height * (decompressor.image_width * 3 + decompressor.padding));
+  ptr = (uint8_t *) malloc(decompressor.image_height * (decompressor.image_width * 3 + decompressor.padding));
   image.data = ptr;
 
   for (int y = decompressor.image_height - 1; y >= 0; y--) {
@@ -1331,7 +1333,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
 #endif
 
   // Form BMP file name
-  char *filename_copy = (char *)malloc(sizeof(char) * (strlen(filename) + 1));
+  char *filename_copy = (char *) malloc(sizeof(char) * (strlen(filename) + 1));
   strcpy(filename_copy, filename);
   char *period_ptr = strrchr(filename_copy, '.');
   if (period_ptr == NULL) {

@@ -17,7 +17,6 @@ JpegInfo jpegInfo;
 BARRIER_INIT(init_barrier, NR_TASKLETS);
 BARRIER_INIT(idct_barrier, NR_TASKLETS);
 
-// TODO: maybe seqread is faster?
 #define PREFETCH_SIZE 1024
 #define PREWRITE_SIZE 768
 __dma_aligned char file_buffer_cache[NR_TASKLETS][PREFETCH_SIZE];
@@ -26,6 +25,8 @@ __dma_aligned short MCU_buffer_cache[NR_TASKLETS][PREWRITE_SIZE];
 
 #define INDEX_OFFSET 64
 #define DC_COEFF_OFFSET 192
+
+#define DEBUG 0
 
 /**
  * Helper array for filling in quantization table in zigzag order
@@ -39,7 +40,9 @@ const uint8_t ZIGZAG_ORDER[] = {0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 
  *
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
-static int eof(JpegDecompressor *d) { return ((d->file_index + d->cache_index) >= d->length); }
+static int eof(JpegDecompressor *d) {
+  return ((d->file_index + d->cache_index) >= d->length);
+}
 
 /**
  * Helper function to read a byte from the file
@@ -100,16 +103,16 @@ static void skip_bytes(JpegDecompressor *d, int num_bytes) {
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static int skip_marker(JpegDecompressor *d) {
-  uint16_t length = read_short(d);
+  int length = read_short(d);
+  length -= 2;
+
   // Length includes itself, so must be at least 2
-  if (length < 2) {
+  if (length < 0) {
     jpegInfo.valid = 0;
-    // TODO: error handling should be done by returning message to host, not by printing out
-    printf("ERROR: Invalid length encountered in skip_marker\n");
+    printf("ERROR: Invalid length encountered in skip_marker");
     return -1;
   }
 
-  length -= 2;
   // Skip over the remaining bytes
   skip_bytes(d, length);
 
@@ -117,20 +120,18 @@ static int skip_marker(JpegDecompressor *d) {
 }
 
 /**
- * Find the next marker (byte with value FF). Swallow consecutive duplicate FF bytes
+ * Find the next JPEG marker (byte with value FF). Swallow consecutive duplicate FF bytes
  *
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
 static int next_marker(JpegDecompressor *d) {
   int discarded_bytes = 0;
 
-  // Find 0xFF byte; count and skip any non-FFs
   uint8_t byte = read_byte(d);
   while (byte != 0xFF) {
     if (eof(d)) {
       return -1;
     }
-
     discarded_bytes++;
     byte = read_byte(d);
   }
@@ -142,7 +143,6 @@ static int next_marker(JpegDecompressor *d) {
     if (eof(d)) {
       return -1;
     }
-
     marker = read_byte(d);
   } while (marker == 0xFF);
 
@@ -158,7 +158,7 @@ static int next_marker(JpegDecompressor *d) {
  *
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
-static void process_header(JpegDecompressor *d) {
+static void check_start_of_image(JpegDecompressor *d) {
   uint8_t c1 = 0, c2 = 0;
 
   if (!eof(d)) {
@@ -168,8 +168,6 @@ static void process_header(JpegDecompressor *d) {
   if (c1 != 0xFF || c2 != M_SOI) {
     jpegInfo.valid = 0;
     printf("Error: Not JPEG: %X %X\n", c1, c2);
-  } else {
-    printf("Got SOI marker: %X %X\n", c1, c2);
   }
 }
 
@@ -551,7 +549,7 @@ static int decode_mcu(JpegDecompressor *d, int component_index, short *previous_
 
   // Get DC value for this MCU block
   uint8_t dc_length = huff_decode(d, dc_table);
-  if (dc_length == (uint8_t)-1) {
+  if (dc_length == (uint8_t) -1) {
     printf("Error: Invalid DC code\n");
     return -1;
   }
@@ -574,7 +572,7 @@ static int decode_mcu(JpegDecompressor *d, int component_index, short *previous_
   int i = 1;
   while (i < 64) {
     uint8_t ac_length = huff_decode(d, ac_table);
-    if (ac_length == (uint8_t)-1) {
+    if (ac_length == (uint8_t) -1) {
       printf("Error: Invalid AC code\n");
       return -1;
     }
@@ -646,8 +644,7 @@ static void decompress_scanline(JpegDecompressor *d) {
           for (int x = 0; x < jpegInfo.color_components[color_index].h_samp_factor; x++) {
             // Decode Huffman coded bitstream
             while (decode_mcu(d, color_index, &previous_dcs[color_index]) != 0) {
-              printf("Tasklet: %d, row: %d, col: %d, color_index: %d, y: %d, x: %d\n", d->tasklet_id, row, col,
-                     color_index, y, x);
+              // Keep decoding until valid MCU is decoded
             }
 
             if (synch_mcu_index < 128) {
@@ -669,7 +666,7 @@ sync0:;
   // The last tasklet cannot overflow, so it returns first
   int current_mcu_index = (row * jpegInfo.mcu_width_real + col) * 192;
   if (current_mcu_index > 16776960 / NR_TASKLETS) {
-    printf("Tasklet %d exceeded buffer size limit, output image is most likely malformed\n", d->tasklet_id);
+    printf("Warning: Tasklet %d exceeded buffer size limit, output image is most likely malformed\n", d->tasklet_id);
   }
 
   if (d->tasklet_id == NR_TASKLETS - 1) {
@@ -679,7 +676,7 @@ sync0:;
 
   // The synchronisation strategy is to have Tasklet i continually decode MCU blocks until several MCU blocks
   // are decoded that match the blocks decoded by Tasklet i + 1. Matching blocks are detected through comparing
-  // the file indexes between the 2 tasklets
+  // the file offset between the 2 tasklets
   int next_tasklet_mcu_blocks_elapsed = 0;
   int num_synched_mcu_blocks = 0;
   int minimum_synched_mcu_blocks = jpegInfo.max_h_samp_factor * jpegInfo.max_v_samp_factor + 2;
@@ -697,8 +694,10 @@ sync0:;
       for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
         for (int y = 0; y < jpegInfo.color_components[color_index].v_samp_factor; y++) {
           for (int x = 0; x < jpegInfo.color_components[color_index].h_samp_factor; x++) {
-            while (decode_mcu(d, color_index, &previous_dcs[color_index]) != 0) {
-              printf("This shouldn't ever print\n");
+            if (decode_mcu(d, color_index, &previous_dcs[color_index]) != 0) {
+              jpegInfo.valid = 0;
+              printf("Error: Invalid MCU\n");
+              return;
             }
 
             short current_tasklet_file_index = d->file_index + d->cache_index;
@@ -962,13 +961,6 @@ static void ycbcr_to_rgb_pixel(JpegDecompressor *d, int cache_index, int v, int 
       int cbcr_pixel_col = x / max_h + 4 * h;
       int cbcr_pixel = (cbcr_pixel_row << 3) + cbcr_pixel_col + 64;
 
-      // TODO: if multiplication is too slow, use bit shifting. However, bit shifting is less accurate from what I can
-      // see int r = buffer[0][i] + buffer[2][i] + (buffer[2][i] >> 2) + (buffer[2][i] >> 3) + (buffer[2][i] >> 5) +
-      // 128; int g = buffer[0][i] - ((buffer[1][i] >> 2) + (buffer[1][i] >> 4) + (buffer[1][i] >> 5)) -
-      //         ((buffer[2][i] >> 1) + (buffer[2][i] >> 3) + (buffer[2][i] >> 4) + (buffer[2][i] >> 5)) + 128;
-      // int b = buffer[0][i] + buffer[1][i] + (buffer[1][i] >> 1) + (buffer[1][i] >> 2) + (buffer[1][i] >> 6) + 128;
-
-      // Integer only, quite accurate but may be less performant than only using bit shifting
       short r =
           MCU_buffer_cache[d->tasklet_id][pixel] + ((45 * MCU_buffer_cache[d->tasklet_id][64 + cbcr_pixel]) >> 5) + 128;
       short g =
@@ -1016,7 +1008,6 @@ static void inverse_dct_convert(JpegDecompressor *d) {
   if (d->tasklet_id == NR_TASKLETS - 1) {
     end_row = jpegInfo.mcu_height;
   }
-  printf("Tasklet %d, start row: %d, end row: %d\n", d->tasklet_id, row, end_row);
 
   for (; row < end_row; row += jpegInfo.max_v_samp_factor) {
     for (int col = 0; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
@@ -1068,17 +1059,14 @@ static int read_marker(JpegDecompressor *d) {
       break;
 
     case M_APP_FIRST ... M_APP_LAST:
-      printf("Got APPN marker: FF %X\n", marker);
       skip_marker(d);
       break;
 
     case M_DQT:
-      printf("Got DQT marker: FF %X\n", marker);
       process_DQT(d);
       break;
 
     case M_DRI:
-      printf("Got DRI marker: FF %X\n", marker);
       process_DRI(d);
       break;
 
@@ -1086,24 +1074,20 @@ static int read_marker(JpegDecompressor *d) {
       // case M_SOF5 ... M_SOF7:
       // case M_SOF9 ... M_SOF11:
       // case M_SOF13 ... M_SOF15:
-      printf("Got SOF marker: FF %X\n", marker);
       process_SOFn(d);
       break;
 
     case M_SOF2:
       // TODO: handle progressive JPEG
       jpegInfo.valid = 0;
-      printf("Got progressive JPEG: FF %X, not supported yet\n", marker);
       break;
 
     case M_DHT:
-      printf("Got DHT marker: FF %X\n", marker);
       process_DHT(d);
       break;
 
     case M_SOS:
       // Return 0 when we find the SOS marker
-      printf("Got SOS marker: FF %X\n", marker);
       process_SOS(d);
       return 0;
 
@@ -1124,6 +1108,7 @@ static int read_marker(JpegDecompressor *d) {
   return 1;
 }
 
+#if DEBUG
 /**
  * Helper function to print out filled in values of the JPEG decompressor
  */
@@ -1202,6 +1187,7 @@ static void print_jpeg_decompressor() {
   printf("MCU height: %d\n", jpegInfo.mcu_height);
   printf("BMP padding: %d\n", jpegInfo.padding);
 }
+#endif
 
 /**
  * Initialize global JPEG info with default values
@@ -1260,6 +1246,9 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
   d->file_index = file_index - offset - PREFETCH_SIZE;
   d->cache_index = offset + PREFETCH_SIZE;
   d->length = jpegInfo.image_data_start + jpegInfo.size_per_tasklet * (d->tasklet_id + 1);
+  if (d->length > jpegInfo.length) {
+    d->length = jpegInfo.length;
+  }
 
   // These fields will be used when decoding Huffman coded bitstream
   d->bit_buffer = 0;
@@ -1273,34 +1262,35 @@ int main() {
   jpegInfo.length = decompressor.length;
 
   if (decompressor.tasklet_id == 0) {
-    int res = 1;
+    int result = 1;
 
-    decompressor.tasklet_id = me();
     decompressor.file_index = -PREFETCH_SIZE;
     decompressor.cache_index = PREFETCH_SIZE;
 
     init_jpeg_info();
 
-    // Check whether file starts with SOI
-    process_header(&decompressor);
+    check_start_of_image(&decompressor);
 
     // Continuously read all markers until we reach Huffman coded bitstream
-    while (jpegInfo.valid && res) {
-      res = read_marker(&decompressor);
+    while (jpegInfo.valid && result) {
+      result = read_marker(&decompressor);
     }
 
     if (!jpegInfo.valid) {
-      printf("Error: Invalid JPEG\n");
       return 1;
     }
 
     jpegInfo.image_data_start = decompressor.file_index + decompressor.cache_index;
-    jpegInfo.size_per_tasklet = (jpegInfo.length - jpegInfo.image_data_start) / NR_TASKLETS;
+    jpegInfo.size_per_tasklet = (jpegInfo.length - jpegInfo.image_data_start + (NR_TASKLETS - 1)) / NR_TASKLETS;
 
     output.image_width = jpegInfo.image_width;
     output.image_height = jpegInfo.image_height;
     output.padding = jpegInfo.padding;
     output.mcu_width_real = jpegInfo.mcu_width_real;
+
+#if DEBUG
+    print_jpeg_decompressor();
+#endif
   }
 
   // All tasklets should wait until tasklet 0 has finished reading all JPEG markers
@@ -1311,7 +1301,6 @@ int main() {
   // Process Huffman coded bitstream, perform inverse DCT, and convert YCbCr to RGB
   decompress_scanline(&decompressor);
   if (!jpegInfo.valid) {
-    // printf("Error: Invalid JPEG\n");
     return 1;
   }
 

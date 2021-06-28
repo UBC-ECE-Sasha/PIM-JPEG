@@ -26,7 +26,7 @@
 // to extract components from dpu_id_t
 #define DPU_ID_RANK(_x) ((_x >> 16) & 0xFF)
 #define DPU_ID_SLICE(_x) ((_x >> 8) & 0xFF)
-#define DPU_ID_DPU(_x) ((_x)&0xFF)
+#define DPU_ID_DPU(_x) ((_x) &0xFF)
 
 #define TIME_NOW(_t) (clock_gettime(CLOCK_MONOTONIC, (_t)))
 
@@ -457,18 +457,6 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
 
     int row = ((dpu_output.image_height + 7) / 8) - 1;
     int mcu_width = ((dpu_output.image_width + 7) / 8);
-    // for (int col = 0; col < mcu_width / 2; col++) {
-    //   for (int color_index = 0; color_index < 3; color_index++) {
-    //     for (int x = 0; x < 64; x++) {
-    //       if (x % 8 == 0) {
-    //         printf("\n");
-    //       }
-    //       int mcu_index = ((row * mcu_width + col) * 3 + color_index) << 6;
-    //       printf("%d ", MCU_buffer[mcu_index + x]);
-    //     }
-    //     printf("\n");
-    //   }
-    // }
 
     // Now write the decoded data out as BMP
     BmpObject image;
@@ -476,7 +464,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
 
     image.win_header.width = dpu_output.image_width;
     image.win_header.height = dpu_output.image_height;
-    ptr = (uint8_t *)malloc(dpu_output.image_height * (dpu_output.image_width * 3 + dpu_output.padding));
+    ptr = (uint8_t *) malloc(dpu_output.image_height * (dpu_output.image_width * 3 + dpu_output.padding));
     image.data = ptr;
 
     for (int y = dpu_output.image_height - 1; y >= 0; y--) {
@@ -852,7 +840,7 @@ int main(int argc, char **argv) {
   printf("Total instructions: %lu\n", results.total_instructions);
   printf("Average instructions per byte: %lu\n", results.total_instructions / total_data_processed);
   printf("Average utilization per DPU: %2.3f%%\n",
-         (double)total_data_processed * 100 / (double)total_dpus_launched / (double)TOTAL_MRAM);
+         (double) total_data_processed * 100 / (double) total_dpus_launched / (double) TOTAL_MRAM);
 #endif // STATISTICS
 
   dbg_printf("Freeing input files\n");
