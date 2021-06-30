@@ -6,7 +6,7 @@
 #include "jpeg-common.h"
 #include "jpeg-host.h"
 
-__host dpu_input_t input;
+__host uint64_t file_length;
 __host dpu_output_t output;
 __mram_noinit char file_buffer[16 << 20];
 // About 32MB
@@ -1257,7 +1257,7 @@ static void init_jpeg_decompressor(JpegDecompressor *d) {
 
 int main() {
   JpegDecompressor decompressor;
-  decompressor.length = input.file_length;
+  decompressor.length = file_length;
   decompressor.tasklet_id = me();
   jpegInfo.length = decompressor.length;
 

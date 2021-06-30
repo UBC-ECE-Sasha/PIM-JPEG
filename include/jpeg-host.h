@@ -11,9 +11,7 @@
 #define NR_TASKLETS 16
 #endif
 
-#define TOTAL_MRAM MEGABYTE(32)
-#define MAX_OUTPUT_LENGTH MEGABYTE(1)
-#define MAX_INPUT_LENGTH (TOTAL_MRAM - MAX_OUTPUT_LENGTH)
+#define MAX_INPUT_LENGTH MEGABYTE(16)
 
 enum { PROG_OK = 0, PROG_INVALID_INPUT, PROG_BUFFER_TOO_SMALL, PROG_OUTPUT_ERROR, PROG_FAULT };
 
@@ -42,10 +40,8 @@ typedef struct file_descriptor {
 } file_descriptor;
 
 typedef struct host_dpu_descriptor {
-  uint32_t file_count;   // how many files are processed by this DPU
-  uint32_t total_length; // size of the concatenated buffer
-  uint32_t perf;         // value from the DPU's performance counter
-  char *buffer;          // concatenated buffer for this DPU
+  uint32_t perf; // value from the DPU's performance counter
+  char *buffer;  // concatenated buffer for this DPU
   char *filename[MAX_FILES_PER_DPU];
   file_descriptor files[MAX_FILES_PER_DPU];
   file_stats stats[MAX_FILES_PER_DPU];
@@ -66,11 +62,12 @@ typedef struct host_results {
   uint64_t total_instructions;
 } host_results;
 
-typedef struct {
+typedef struct dpu_input_t {
+  char *buffer;
   uint64_t file_length;
 } dpu_input_t;
 
-typedef struct {
+typedef struct dpu_output_t {
   uint16_t image_width;
   uint16_t image_height;
   uint32_t padding;
