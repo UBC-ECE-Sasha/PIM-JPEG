@@ -261,6 +261,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
       continue;
     }
     dpu_inputs[dpu_id].file_length = file_length;
+    dpu_inputs[dpu_id].filename = filename;
 
     // read the file into the descriptor
     if (read_input_host(filename, file_length, dpu_inputs[dpu_id].buffer) < 0) {
@@ -292,45 +293,13 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     }
   }
 
-  // TODO: extract this to a function
   // Now write the decoded data out as BMP
-  BmpObject image;
-  uint8_t *ptr;
-
-  image.win_header.width = dpu_outputs[0].image_width;
-  image.win_header.height = dpu_outputs[0].image_height;
-  ptr = (uint8_t *) malloc(dpu_outputs[0].image_height * (dpu_outputs[0].image_width * 3 + dpu_outputs[0].padding));
-  image.data = ptr;
-
-  for (int y = dpu_outputs[0].image_height - 1; y >= 0; y--) {
-    uint32_t mcu_row = y / 8;
-    uint32_t pixel_row = y % 8;
-
-    for (int x = 0; x < dpu_outputs[0].image_width; x++) {
-      uint32_t mcu_column = x / 8;
-      uint32_t pixel_column = x % 8;
-      uint32_t mcu_index = mcu_row * dpu_outputs[0].mcu_width_real + mcu_column;
-      uint32_t pixel_index = pixel_row * 8 + pixel_column;
-      ptr[0] = MCU_buffer[0][(mcu_index * 3 + 2) * 64 + pixel_index];
-      ptr[1] = MCU_buffer[0][(mcu_index * 3 + 1) * 64 + pixel_index];
-      ptr[2] = MCU_buffer[0][(mcu_index * 3 + 0) * 64 + pixel_index];
-      ptr += 3;
-    }
-
-    for (uint32_t i = 0; i < dpu_outputs[0].padding; i++) {
-      ptr[0] = 0;
-      ptr++;
-    }
-  }
-  remaining_file_count--;
-
-  write_bmp("output.bmp", &image);
-  free(image.data);
+  write_bmp(dpu_inputs[0].filename, dpu_outputs[0].image_width, dpu_outputs[0].image_height, dpu_outputs[0].padding,
+            dpu_outputs[0].mcu_width_real, MCU_buffer[0]);
 
   free(dpu_outputs);
   free(MCU_buffer);
 
-done:
   for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
     free(dpu_inputs[dpu_id].buffer);
   }

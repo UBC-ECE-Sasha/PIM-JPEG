@@ -3,29 +3,75 @@
 #include <stdlib.h>
 #include <string.h>
 
-int write_bmp(const char *filename, BmpObject *picture) {
+static char *form_bmp_filename(const char *filename) {
+  char *filename_copy = (char *) malloc(sizeof(char) * (strlen(filename) + 9));
+  strcpy(filename_copy, filename);
+  char *period_ptr = strrchr(filename_copy, '.');
+  if (period_ptr == NULL) {
+    strcpy(filename_copy + strlen(filename_copy), "-dpu.bmp");
+  } else {
+    strcpy(period_ptr, "-dpu.bmp");
+  }
+
+  return filename_copy;
+}
+
+static void initialize_window_info_header(BmpObject *image, uint32_t image_width, uint32_t image_height) {
+  image->win_header.width = image_width;
+  image->win_header.height = image_height;
+
+  image->win_header.size = sizeof(WindowsInfoheader);
+  image->win_header.planes = 1;
+  image->win_header.bits_per_pixel = 24;
+  image->win_header.compression = BI_RGB;
+  image->win_header.length =
+      image->win_header.width * image->win_header.height * (image->win_header.bits_per_pixel >> 3);
+  image->win_header.hres = 1;
+  image->win_header.vres = 1;
+  image->win_header.palette = 0;
+  image->win_header.important = 0;
+}
+
+static void initialize_bmp_header(BmpObject *image) {
+  image->header.magic[0] = 'B';
+  image->header.magic[1] = 'M';
+  image->header.data = sizeof(BmpHeader) + sizeof(WindowsInfoheader);
+  image->header.size = image->header.data + image->win_header.length;
+}
+
+static void initialize_bmp_body(BmpObject *image, uint32_t image_padding, uint32_t mcu_width, short *MCU_buffer) {
+  uint8_t *ptr = (uint8_t *) malloc(image->win_header.height * (image->win_header.width * 3 + image_padding));
+  image->data = ptr;
+
+  for (int y = image->win_header.height - 1; y >= 0; y--) {
+    uint32_t mcu_row = y / 8;
+    uint32_t pixel_row = y % 8;
+
+    for (int x = 0; x < image->win_header.width; x++) {
+      uint32_t mcu_column = x / 8;
+      uint32_t pixel_column = x % 8;
+      uint32_t mcu_index = mcu_row * mcu_width + mcu_column;
+      uint32_t pixel_index = pixel_row * 8 + pixel_column;
+      ptr[0] = MCU_buffer[(mcu_index * 3 + 2) * 64 + pixel_index];
+      ptr[1] = MCU_buffer[(mcu_index * 3 + 1) * 64 + pixel_index];
+      ptr[2] = MCU_buffer[(mcu_index * 3 + 0) * 64 + pixel_index];
+      ptr += 3;
+    }
+
+    for (uint32_t i = 0; i < image_padding; i++) {
+      ptr[0] = 0;
+      ptr++;
+    }
+  }
+}
+
+int write_bmp_to_file(const char *filename, BmpObject *picture) {
   FILE *output;
 
   output = fopen(filename, "wb");
   if (!output) {
     return -1;
   }
-
-  picture->win_header.size = sizeof(WindowsInfoheader);
-  picture->win_header.planes = 1;
-  picture->win_header.bits_per_pixel = 24;
-  picture->win_header.compression = BI_RGB;
-  picture->win_header.length =
-      picture->win_header.width * picture->win_header.height * (picture->win_header.bits_per_pixel >> 3);
-  picture->win_header.hres = 1;
-  picture->win_header.vres = 1;
-  picture->win_header.palette = 0;
-  picture->win_header.important = 0;
-
-  picture->header.magic[0] = 'B';
-  picture->header.magic[1] = 'M';
-  picture->header.data = sizeof(BmpHeader) + sizeof(WindowsInfoheader);
-  picture->header.size = picture->header.data + picture->win_header.length;
 
   fwrite(&picture->header, sizeof(BmpHeader), 1, output);
   fwrite(&picture->win_header, sizeof(WindowsInfoheader), 1, output);
@@ -36,6 +82,24 @@ int write_bmp(const char *filename, BmpObject *picture) {
   return 0;
 }
 
+int write_bmp(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
+              uint32_t mcu_width, short *MCU_buffer) {
+  BmpObject image;
+
+  initialize_window_info_header(&image, image_width, image_height);
+  initialize_bmp_header(&image);
+  initialize_bmp_body(&image, image_padding, mcu_width, MCU_buffer);
+
+  char *filename_dpu = form_bmp_filename(filename);
+
+  int result = write_bmp_to_file(filename_dpu, &image);
+  free(image.data);
+  free(filename_dpu);
+
+  return result;
+}
+
+/*
 int read_bmp(const char *filename, BmpObject *picture) {
   FILE *infile;
 
@@ -77,7 +141,6 @@ int read_bmp(const char *filename, BmpObject *picture) {
   return 0;
 }
 
-/*
 int main(int argc, char **argv)
 {
         uint32_t row, col;

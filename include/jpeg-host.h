@@ -65,6 +65,7 @@ typedef struct host_results {
 typedef struct dpu_input_t {
   char *buffer;
   uint64_t file_length;
+  char *filename;
 } dpu_input_t;
 
 typedef struct dpu_output_t {

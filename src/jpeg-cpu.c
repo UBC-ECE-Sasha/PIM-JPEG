@@ -1342,7 +1342,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
     strcpy(period_ptr, ".bmp");
   }
 
-  write_bmp(filename_copy, &image);
+  write_bmp_to_file(filename_copy, &image);
   printf("Decoded to: %s\n", filename_copy);
 
   free(filename_copy);
