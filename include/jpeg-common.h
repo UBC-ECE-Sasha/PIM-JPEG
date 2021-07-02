@@ -113,41 +113,6 @@ typedef struct JpegDecompressor {
   int file_index;
   uint32_t cache_index;
 
-  uint8_t valid; // indicates whether file is actually a JPEG file
-
-  // from DQT
-  QuantizationTable quant_tables[4];
-
-  // from DRI
-  uint16_t restart_interval;
-
-  // from SOF
-  uint16_t image_height;
-  uint16_t image_width;
-  uint8_t num_color_components;
-  ColorComponentInfo color_components[3];
-
-  // from DHT
-  HuffmanTable dc_huffman_tables[2];
-  HuffmanTable ac_huffman_tables[2];
-
-  // from SOS
-  uint8_t ss; // Start of spectral selection
-  uint8_t se; // End of spectral selection
-  uint8_t Ah; // Successive approximation high
-  uint8_t Al; // Successive approximation low
-
-  // for decoding and writing to BMP
-  uint32_t mcu_height;
-  uint32_t mcu_width;
-  uint32_t padding;
-
-  // used when horizontal or vertical sampling factors are not 1
-  uint32_t mcu_height_real;   // mcu_height + padding, padding must be 0 or 1
-  uint32_t mcu_width_real;    // mcu_width + padding, padding must be 0 or 1
-  uint32_t max_h_samp_factor; // maximum value of horizontal sampling factors amongst all color components
-  uint32_t max_v_samp_factor; // maximum value of vertical sampling factors amongst all color components
-
   // bit buffer
   uint32_t bit_buffer;
   uint32_t bits_left;
@@ -197,13 +162,6 @@ typedef struct JpegInfo {
   int dc_offset[NR_TASKLETS - 1][3];     // offset to the 3 DC coefficients from tasklet i to tasklet i + 1
   uint32_t rows_per_mcu;
 } JpegInfo;
-
-/**
- * MCU has a 2D array. 3 indices for color channels (RGB) and 64 indices the 64 values in an 8x8 MCU
- */
-typedef struct MCU {
-  short buffer[3][64];
-} MCU;
 
 void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer);
 
