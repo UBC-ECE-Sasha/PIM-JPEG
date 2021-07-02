@@ -35,20 +35,10 @@ const uint8_t ZIGZAG_ORDER[] = {0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 
                                 41, 34, 27, 20, 13, 6,  7,  14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23,
                                 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63};
 
-/**
- * Check whether EOF is reached by comparing current file index is >= total length of file
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- */
-static int eof(JpegDecompressor *d) {
+static int is_eof(JpegDecompressor *d) {
   return ((d->file_index + d->cache_index) >= d->length);
 }
 
-/**
- * Helper function to read a byte from the file
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- */
 static uint8_t read_byte(JpegDecompressor *d) {
   if (d->cache_index >= PREFETCH_SIZE) {
     d->file_index += PREFETCH_SIZE;
@@ -60,11 +50,6 @@ static uint8_t read_byte(JpegDecompressor *d) {
   return byte;
 }
 
-/**
- * Helper function to read 2 bytes from the file, MSB order
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- */
 static uint16_t read_short(JpegDecompressor *d) {
   uint8_t byte1 = read_byte(d);
   uint8_t byte2 = read_byte(d);
@@ -73,95 +58,76 @@ static uint16_t read_short(JpegDecompressor *d) {
   return two_bytes;
 }
 
-/**
- * Skip num_bytes bytes
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- * @param num_bytes The number of bytes to skip
- */
 static void skip_bytes(JpegDecompressor *d, int num_bytes) {
-  // If after skipping num_bytes bytes we go beyond EOF, then only skip till EOF
-  if (d->file_index + d->cache_index + num_bytes >= d->length) {
+  int offset = d->cache_index + num_bytes;
+  if (offset >= PREFETCH_SIZE) {
+    while (offset >= PREFETCH_SIZE) {
+      offset -= PREFETCH_SIZE;
+      d->file_index += PREFETCH_SIZE;
+    }
+    mram_read(&file_buffer[d->file_index], file_buffer_cache[d->tasklet_id], PREFETCH_SIZE);
+  }
+  d->cache_index = offset;
+
+  if (is_eof(d)) {
     d->file_index = d->length;
     d->cache_index = 0;
-  } else {
-    int offset = d->cache_index + num_bytes;
-    if (offset >= PREFETCH_SIZE) {
-      while (offset >= PREFETCH_SIZE) {
-        offset -= PREFETCH_SIZE;
-        d->file_index += PREFETCH_SIZE;
-      }
-      mram_read(&file_buffer[d->file_index], file_buffer_cache[d->tasklet_id], PREFETCH_SIZE);
-    }
-    d->cache_index = offset;
   }
 }
 
-/**
- * Skip over an unknown or uninteresting variable-length marker like APPN or COM
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- */
 static int skip_marker(JpegDecompressor *d) {
   int length = read_short(d);
   length -= 2;
 
-  // Length includes itself, so must be at least 2
   if (length < 0) {
     jpegInfo.valid = 0;
     printf("ERROR: Invalid length encountered in skip_marker");
     return -1;
   }
 
-  // Skip over the remaining bytes
   skip_bytes(d, length);
-
   return 0;
 }
 
-/**
- * Find the next JPEG marker (byte with value FF). Swallow consecutive duplicate FF bytes
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- */
-static int next_marker(JpegDecompressor *d) {
-  int discarded_bytes = 0;
-
+static int count_and_skip_non_marker_bytes(JpegDecompressor *d) {
+  int num_skipped_bytes = 0;
   uint8_t byte = read_byte(d);
   while (byte != 0xFF) {
-    if (eof(d)) {
+    if (is_eof(d)) {
       return -1;
     }
-    discarded_bytes++;
+    num_skipped_bytes++;
     byte = read_byte(d);
   }
+  return num_skipped_bytes;
+}
 
-  // Get marker code byte, swallowing any duplicate FF bytes.
-  // Extra FFs are legal as pad bytes, so don't count them in discarded_bytes.
+static int get_marker_and_ignore_ff_bytes(JpegDecompressor *d) {
   int marker;
   do {
-    if (eof(d)) {
+    if (is_eof(d)) {
       return -1;
     }
     marker = read_byte(d);
   } while (marker == 0xFF);
+  return marker;
+}
 
-  if (discarded_bytes) {
-    printf("WARNING: Discarded %u bytes\n", discarded_bytes);
+static int skip_to_next_marker(JpegDecompressor *d) {
+  int num_skipped_bytes = count_and_skip_non_marker_bytes(d);
+  int marker = get_marker_and_ignore_ff_bytes(d);
+
+  if (num_skipped_bytes) {
+    printf("WARNING: Discarded %u bytes\n", num_skipped_bytes);
   }
 
   return marker;
 }
 
-/**
- * Read whether we are at valid START OF IMAGE
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- */
 static void check_start_of_image(JpegDecompressor *d) {
   uint8_t c1 = 0, c2 = 0;
 
-  if (!eof(d)) {
+  if (!is_eof(d)) {
     c1 = read_byte(d);
     c2 = read_byte(d);
   }
@@ -171,12 +137,7 @@ static void check_start_of_image(JpegDecompressor *d) {
   }
 }
 
-/**
- * Read Quantization Table
- * Page 39: Section B.2.4.1
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- */
+// Page 39: Section B.2.4.1
 static void process_DQT(JpegDecompressor *d) {
   int length = read_short(d); // Lq
   length -= 2;
@@ -635,7 +596,7 @@ static void decompress_scanline(JpegDecompressor *d) {
 
   for (row = 0; row < jpegInfo.mcu_height; row += jpegInfo.max_v_samp_factor) {
     for (col = 0; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
-      if (eof(d)) {
+      if (is_eof(d)) {
         goto sync0;
       }
 
@@ -1051,7 +1012,7 @@ static void inverse_dct_convert(JpegDecompressor *d) {
 static int read_marker(JpegDecompressor *d) {
   int marker;
 
-  marker = next_marker(d);
+  marker = skip_to_next_marker(d);
   switch (marker) {
     case -1:
       jpegInfo.valid = 0;
