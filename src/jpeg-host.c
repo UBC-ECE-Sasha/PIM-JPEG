@@ -293,9 +293,10 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     }
   }
 
-  // Now write the decoded data out as BMP
-  write_bmp(dpu_inputs[0].filename, dpu_outputs[0].image_width, dpu_outputs[0].image_height, dpu_outputs[0].padding,
-            dpu_outputs[0].mcu_width_real, MCU_buffer[0]);
+  for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
+    write_bmp(dpu_inputs[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
+              dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
+  }
 
   free(dpu_outputs);
   free(MCU_buffer);
