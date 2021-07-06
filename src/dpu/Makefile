@@ -4,7 +4,7 @@ IDIR2 = ../../PIM-common/host/include
 CC = dpu-upmem-dpurte-clang
 CFLAGS = -DNR_DPUS=$(NR_DPUS) -DNR_TASKLETS=$(NR_TASKLETS) -I$(IDIR0) -I$(IDIR1) -I$(IDIR2) -O2
 
-SOURCE = jpeg-dpu.c dpu-jpeg-reader.c dpu-jpeg-marker.c
+SOURCE = jpeg-dpu.c dpu-jpeg-reader.c dpu-jpeg-marker.c dpu-jpeg-decode.c dpu-jpeg-idct-convert.c
 
 .PHONY: clean
 
