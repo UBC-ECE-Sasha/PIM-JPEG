@@ -3,14 +3,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-static char *form_bmp_filename(const char *filename) {
+static char *form_bmp_filename(const char *filename, int is_dpu) {
+  char *extension = is_dpu ? "-dpu.bmp" : "-cpu.bmp";
   char *filename_copy = (char *) malloc(sizeof(char) * (strlen(filename) + 9));
   strcpy(filename_copy, filename);
   char *period_ptr = strrchr(filename_copy, '.');
   if (period_ptr == NULL) {
-    strcpy(filename_copy + strlen(filename_copy), "-dpu.bmp");
+    strcpy(filename_copy + strlen(filename_copy), extension);
   } else {
-    strcpy(period_ptr, "-dpu.bmp");
+    strcpy(period_ptr, extension);
   }
 
   return filename_copy;
@@ -65,7 +66,7 @@ static void initialize_bmp_body(BmpObject *image, uint32_t image_padding, uint32
   }
 }
 
-int write_bmp_to_file(const char *filename, BmpObject *picture) {
+static int write_bmp_to_file(const char *filename, BmpObject *picture) {
   FILE *output;
 
   output = fopen(filename, "wb");
@@ -82,21 +83,32 @@ int write_bmp_to_file(const char *filename, BmpObject *picture) {
   return 0;
 }
 
-int write_bmp(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
-              uint32_t mcu_width, short *MCU_buffer) {
+static int write_bmp(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
+                     uint32_t mcu_width, short *MCU_buffer, int is_dpu) {
   BmpObject image;
 
   initialize_window_info_header(&image, image_width, image_height);
   initialize_bmp_header(&image);
   initialize_bmp_body(&image, image_padding, mcu_width, MCU_buffer);
 
-  char *filename_dpu = form_bmp_filename(filename);
+  char *filename_dpu = form_bmp_filename(filename, is_dpu);
+  printf("Filename: %s\n", filename_dpu);
 
   int result = write_bmp_to_file(filename_dpu, &image);
   free(image.data);
   free(filename_dpu);
 
   return result;
+}
+
+int write_bmp_cpu(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
+                  uint32_t mcu_width, short *MCU_buffer) {
+  return write_bmp(filename, image_width, image_height, image_padding, mcu_width, MCU_buffer, 0);
+}
+
+int write_bmp_dpu(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
+                  uint32_t mcu_width, short *MCU_buffer) {
+  return write_bmp(filename, image_width, image_height, image_padding, mcu_width, MCU_buffer, 1);
 }
 
 /*

@@ -3,17 +3,10 @@
 
 #include <stdint.h>
 
-#define DCTSIZE 8
-#define MAX_SAMP_FACTOR 4
-#define MAX(_a, _b) (_a > _b ? _a : _b)
-
-#define MIN_GET_BITS 15
-
-#ifndef NR_TASKLETS
-#define NR_TASKLETS 16
-#endif
-
 #define MAX_HUFFMAN_TABLES 2
+
+#define JPEG_VALID 0
+#define JPEG_INVALID_ERROR_CODE 1
 
 /**
  * JPEG Markers: CCITT Rec T.81 page 32
@@ -156,13 +149,15 @@ typedef struct JpegInfo {
   uint32_t mcu_width_real;    // mcu_width + padding, padding must be 0 or 1
   uint32_t max_h_samp_factor; // maximum value of horizontal sampling factors amongst all color components
   uint32_t max_v_samp_factor; // maximum value of vertical sampling factors amongst all color components
-
-  uint32_t mcu_end_index[NR_TASKLETS];   // end index of each tasklet in the 2D MRAM MCU buffer
-  uint32_t mcu_start_index[NR_TASKLETS]; // start index of each tasklet in the 2D MRAM MCU buffer
-  int dc_offset[NR_TASKLETS - 1][3];     // offset to the 3 DC coefficients from tasklet i to tasklet i + 1
-  uint32_t rows_per_mcu;
 } JpegInfo;
 
 void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer);
+
+/**
+ * Helper array for filling in quantization table in zigzag order
+ */
+const uint8_t ZIGZAG_ORDER[] = {0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 18, 11, 4,  5,  12, 19, 26, 33, 40, 48,
+                                41, 34, 27, 20, 13, 6,  7,  14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23,
+                                30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63};
 
 #endif // _JPEG_CPU_H

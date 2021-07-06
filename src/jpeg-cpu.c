@@ -52,12 +52,13 @@ Decompress    --> Frame rate:         92.177865 fps
                   Throughput:         191.140021 Megapixels/sec
 */
 
-/**
- * Helper array for filling in quantization table in zigzag order
- */
-const uint8_t ZIGZAG_ORDER[] = {0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 18, 11, 4,  5,  12, 19, 26, 33, 40, 48,
-                                41, 34, 27, 20, 13, 6,  7,  14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23,
-                                30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63};
+// /**
+//  * Helper array for filling in quantization table in zigzag order
+//  */
+// const uint8_t ZIGZAG_ORDER[] = {0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 32, 25, 18, 11, 4,  5,  12, 19, 26, 33, 40,
+// 48,
+//                                 41, 34, 27, 20, 13, 6,  7,  14, 21, 28, 35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15,
+//                                 23, 30, 37, 44, 51, 58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63};
 
 static int is_eof(JpegDecompressor *d) {
   return (d->ptr >= (d->data + d->length));
@@ -287,7 +288,6 @@ static void initialize_MCU_height_width() {
   if (jpegInfo.max_h_samp_factor == 2 && jpegInfo.mcu_width_real % 2 == 1) {
     jpegInfo.mcu_width_real++;
   }
-  jpegInfo.rows_per_mcu = jpegInfo.mcu_height_real / NR_TASKLETS;
 }
 
 // Page 35: Section B.2.2
@@ -516,15 +516,6 @@ static uint8_t huff_decode(JpegDecompressor *d, HuffmanTable *h_table) {
   return -1;
 }
 
-/**
- * F.2.1.2 Decode 8x8 block data unit
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- * @param component_index The component index specifies which color channel to use (Y, Cb, Cr),
- *                        used to determine which quantization table and Huffman tables to use
- * @param buffer The MCU buffer, has size of 64
- * @param previous_dc The value of the previous DC coefficient, needed to calculate value of current DC coefficient
- */
 static int decode_mcu(JpegDecompressor *d, int component_index, short *buffer, short *previous_dc) {
   QuantizationTable *q_table = &jpegInfo.quant_tables[jpegInfo.color_components[component_index].quant_table_id];
   HuffmanTable *dc_table = &jpegInfo.dc_huffman_tables[jpegInfo.color_components[component_index].dc_huffman_table_id];
@@ -606,11 +597,6 @@ static int decode_mcu(JpegDecompressor *d, int component_index, short *buffer, s
 }
 
 #if USE_FLOAT
-/**
- * Function to perform inverse DCT for one of the color components of an MCU using floats
- *
- * @param buffer The MCU buffer, has size of 64
- */
 static void inverse_dct_component_float(short *buffer) {
   // ANN algorithm
   for (int i = 0; i < 8; i++) {
@@ -718,11 +704,6 @@ static void inverse_dct_component_float(short *buffer) {
   }
 }
 #else
-/**
- * Function to perform inverse DCT for one of the color components of an MCU using integers only
- *
- * @param buffer The MCU buffer, has size of 64
- */
 static void inverse_dct_component(short *buffer) {
   // ANN algorithm, intermediate values are bit shifted to the left to preserve precision
   // and then bit shifted to the right at the end
@@ -870,26 +851,18 @@ static void inverse_dct_component(short *buffer) {
 }
 #endif
 
-/**
- * Function to perform conversion from YCbCr to RGB for the 64 pixels within an MCU
- * https://en.wikipedia.org/wiki/YUV Y'UV444 to RGB888 conversion
- *
- * @param buffer The 3 MCU buffers to read from for luminance and write to, each has size of 64
- * @param cbcr The 3 MCU buffers to read from for Cb and Cr channels
- * @param v Determines whether to read from second vertical half of CbCr buffer
- * @param h Determines whether to read from second horizontal half of CbCr buffer
- */
-static void ycbcr_to_rgb_pixel(short buffer[3][64], short cbcr[3][64], int v, int h) {
+// https://en.wikipedia.org/wiki/YUV Y'UV444 to RGB888 conversion
+static void ycbcr_to_rgb_pixel(short *buffer, short *cbcr, int v, int h) {
   int max_v = jpegInfo.max_v_samp_factor;
   int max_h = jpegInfo.max_h_samp_factor;
 
   // Iterating from bottom right to top leftbecause otherwise the pixel data will get overwritten
   for (int y = 7; y >= 0; y--) {
     for (int x = 7; x >= 0; x--) {
-      uint32_t pixel = y * 8 + x;
+      uint32_t pixel = (y << 3) + x;
       uint32_t cbcr_pixel_row = y / max_v + 4 * v;
       uint32_t cbcr_pixel_col = x / max_h + 4 * h;
-      uint32_t cbcr_pixel = cbcr_pixel_row * 8 + cbcr_pixel_col;
+      uint32_t cbcr_pixel = (cbcr_pixel_row << 3) + cbcr_pixel_col + 64;
 
 #if USE_FLOAT
       // Floating point version, most accurate, but floating point calculations in DPUs are emulated, so very slow
@@ -904,9 +877,9 @@ static void ycbcr_to_rgb_pixel(short buffer[3][64], short cbcr[3][64], int v, in
       // int b = buffer[0][i] + buffer[1][i] + (buffer[1][i] >> 1) + (buffer[1][i] >> 2) + (buffer[1][i] >> 6) + 128;
 
       // Integer only, quite accurate but may be less performant than only using bit shifting
-      short r = buffer[0][pixel] + ((45 * cbcr[2][cbcr_pixel]) >> 5) + 128;
-      short g = buffer[0][pixel] - ((11 * cbcr[1][cbcr_pixel] + 23 * cbcr[2][cbcr_pixel]) >> 5) + 128;
-      short b = buffer[0][pixel] + ((113 * cbcr[1][cbcr_pixel]) >> 6) + 128;
+      short r = buffer[pixel] + ((45 * cbcr[64 + cbcr_pixel]) >> 5) + 128;
+      short g = buffer[pixel] - ((11 * cbcr[cbcr_pixel] + 23 * cbcr[64 + cbcr_pixel]) >> 5) + 128;
+      short b = buffer[pixel] + ((113 * cbcr[cbcr_pixel]) >> 6) + 128;
 #endif
 
       if (r < 0)
@@ -922,18 +895,13 @@ static void ycbcr_to_rgb_pixel(short buffer[3][64], short cbcr[3][64], int v, in
       if (b > 255)
         b = 255;
 
-      buffer[0][pixel] = r;
-      buffer[1][pixel] = g;
-      buffer[2][pixel] = b;
+      buffer[pixel] = r;
+      buffer[64 + pixel] = g;
+      buffer[128 + pixel] = b;
     }
   }
 }
 
-/**
- * Decode the Huffman coded bitstream, compute inverse DCT, and convert from YCbCr to RGB
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- */
 static short *decompress_scanline(JpegDecompressor *d) {
   short *mcus = (short *) malloc((jpegInfo.mcu_height_real * jpegInfo.mcu_width_real) * (3 * 64) * sizeof(short));
   short previous_dcs[3] = {0};
@@ -979,14 +947,14 @@ static short *decompress_scanline(JpegDecompressor *d) {
         }
       }
 
-      // // Convert from YCbCr to RGB
-      // short(*cbcr)[64] = mcus[row * d->mcu_width_real + col].buffer;
-      // for (int y = jpegInfo.max_v_samp_factor - 1; y >= 0; y--) {
-      //   for (int x = jpegInfo.max_h_samp_factor - 1; x >= 0; x--) {
-      //     short(*buffer)[64] = mcus[(row + y) * jpegInfo.mcu_width_real + (col + x)].buffer;
-      //     ycbcr_to_rgb_pixel(buffer, cbcr, d->max_v_samp_factor, d->max_h_samp_factor, y, x);
-      //   }
-      // }
+      // Convert from YCbCr to RGB
+      short *cbcr = &mcus[((row * jpegInfo.mcu_width_real + col) * 3) << 6];
+      for (int y = jpegInfo.max_v_samp_factor - 1; y >= 0; y--) {
+        for (int x = jpegInfo.max_h_samp_factor - 1; x >= 0; x--) {
+          short *buffer = &mcus[(((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3) << 6];
+          ycbcr_to_rgb_pixel(buffer, cbcr, y, x);
+        }
+      }
     }
   }
 
@@ -996,11 +964,11 @@ static short *decompress_scanline(JpegDecompressor *d) {
 /**
  * Read JPEG markers
  * Return 0 when the SOS marker is found
- * Otherwise return 1 for failure
+ * Otherwise return 1
  *
  * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
  */
-static int read_marker(JpegDecompressor *d) {
+static int read_next_marker(JpegDecompressor *d) {
   int marker;
 
   marker = skip_to_next_marker(d);
@@ -1153,7 +1121,6 @@ static void init_jpeg_info() {
     }
   }
 
-  // These fields will be filled when reading the JPEG header information
   jpegInfo.restart_interval = 0;
   jpegInfo.image_height = 0;
   jpegInfo.image_width = 0;
@@ -1163,25 +1130,17 @@ static void init_jpeg_info() {
   jpegInfo.Ah = 0;
   jpegInfo.Al = 0;
 
-  // These fields will be used when writing to BMP
   jpegInfo.mcu_width = 0;
   jpegInfo.mcu_height = 0;
   jpegInfo.padding = 0;
 }
 
-/**
- * Initialize the JPEG decompressor with default values
- *
- * @param d JpegDecompressor struct that holds all information about the JPEG currently being decoded
- */
 static void init_jpeg_decompressor(JpegDecompressor *d) {
-  // These fields will be used when decoded Huffman coded bitstream
   d->bit_buffer = 0;
   d->bits_left = 0;
 }
 
 /**
- * Public function exposed for other files to call
  * Entry point for decoding JPEG using CPU
  *
  * @param file_length The total length of a file in bytes
@@ -1206,7 +1165,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
 
   // Continuously read all markers until we reach Huffman coded bitstream
   while (jpegInfo.valid && result) {
-    result = read_marker(&decompressor);
+    result = read_next_marker(&decompressor);
   }
 
   if (!jpegInfo.valid) {
@@ -1224,58 +1183,9 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
     return;
   }
 
-  //   // Now write the decoded data out as BMP
-  //   write_bmp(filename, decompressor.image_width, decompressor.image_height, decompressor.padding,
-  //             decompressor.mcu_width_real, mcus[mcu]) BmpObject image;
-  //   uint8_t *ptr;
+  // Now write the decoded data out as BMP
+  write_bmp_cpu(filename, jpegInfo.image_width, jpegInfo.image_height, jpegInfo.padding, jpegInfo.mcu_width_real, mcus);
+  free(mcus);
 
-  //   image.win_header.width = decompressor.image_width;
-  //   image.win_header.height = decompressor.image_height;
-  //   ptr = (uint8_t *) malloc(decompressor.image_height * (decompressor.image_width * 3 + decompressor.padding));
-  //   image.data = ptr;
-
-  //   for (int y = decompressor.image_height - 1; y >= 0; y--) {
-  //     uint32_t mcu_row = y / 8;
-  //     uint32_t pixel_row = y % 8;
-
-  //     for (int x = 0; x < decompressor.image_width; x++) {
-  //       uint32_t mcu_column = x / 8;
-  //       uint32_t pixel_column = x % 8;
-  //       uint32_t mcu_index = mcu_row * decompressor.mcu_width_real + mcu_column;
-  //       uint32_t pixel_index = pixel_row * 8 + pixel_column;
-  //       ptr[0] = mcus[mcu_index].buffer[2][pixel_index];
-  //       ptr[1] = mcus[mcu_index].buffer[1][pixel_index];
-  //       ptr[2] = mcus[mcu_index].buffer[0][pixel_index];
-  //       ptr += 3;
-  //     }
-
-  //     for (uint32_t i = 0; i < decompressor.padding; i++) {
-  //       ptr[0] = 0;
-  //       ptr++;
-  //     }
-  //   }
-
-  // #if TIME
-  //   TIME_NOW(&end);
-  //   run_time = TIME_DIFFERENCE(start, end);
-  //   printf("Write to BMP runtime: %fs\n", run_time);
-  // #endif
-
-  //   // Form BMP file name
-  //   char *filename_copy = (char *) malloc(sizeof(char) * (strlen(filename) + 1));
-  //   strcpy(filename_copy, filename);
-  //   char *period_ptr = strrchr(filename_copy, '.');
-  //   if (period_ptr == NULL) {
-  //     strcpy(filename_copy + strlen(filename_copy), ".bmp");
-  //   } else {
-  //     strcpy(period_ptr, ".bmp");
-  //   }
-
-  //   write_bmp_to_file(filename_copy, &image);
-  //   printf("Decoded to: %s\n", filename_copy);
-
-  //   free(filename_copy);
-  //   free(image.data);
-  //   free(mcus);
   return;
 }

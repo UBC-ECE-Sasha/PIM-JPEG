@@ -191,7 +191,7 @@ static int read_input_host(char *in_file, uint64_t length, char *buffer) {
 
 static int dpu_main(struct jpeg_options *opts, host_results *results) {
   char dpu_program_name[32];
-  struct dpu_set_t dpus, dpu_rank;
+  struct dpu_set_t dpus, dpu_rank, dpu;
   int status;
   uint8_t rank_id;
   uint64_t rank_status = 0; // bitmap indicating if the rank is busy or free
@@ -294,8 +294,16 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   }
 
   for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
-    write_bmp(dpu_inputs[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
-              dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
+    write_bmp_dpu(dpu_inputs[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
+                  dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
+  }
+
+  DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
+    printf("Rank ID: %d\n", rank_id);
+    DPU_FOREACH(dpu_rank, dpu, dpu_id) {
+      printf("DPU ID: %d\n", dpu_id);
+      DPU_ASSERT(dpu_log_read(dpu, stdout));
+    }
   }
 
   free(dpu_outputs);

@@ -33,8 +33,10 @@ typedef struct BmpObject {
   uint8_t *data;
 } BmpObject;
 
-int write_bmp(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
-              uint32_t mcu_width, short *MCU_buffer);
-int write_bmp_to_file(const char *filename, BmpObject *picture);
+int write_bmp_cpu(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
+                  uint32_t mcu_width, short *MCU_buffer);
+
+int write_bmp_dpu(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
+                  uint32_t mcu_width, short *MCU_buffer);
 
 #endif // _BMP__H
