@@ -19,14 +19,18 @@ typedef struct JpegInfoDpu {
 
 void init_file_reader_index(JpegDecompressor *d);
 void init_jpeg_decompressor(JpegDecompressor *d);
-int is_eof(JpegDecompressor *d);
 uint8_t read_byte(JpegDecompressor *d);
 uint16_t read_short(JpegDecompressor *d);
-int skip_marker(JpegDecompressor *d);
-int skip_to_next_marker(JpegDecompressor *d);
+int is_eof(JpegDecompressor *d);
+void skip_bytes(JpegDecompressor *d, int num_bytes);
 
 int check_start_of_image(JpegDecompressor *d);
 int read_next_marker(JpegDecompressor *d);
+int process_DQT(JpegDecompressor *d);
+int process_DRI(JpegDecompressor *d);
+int process_SOFn(JpegDecompressor *d);
+int process_DHT(JpegDecompressor *d);
+int process_SOS(JpegDecompressor *d);
 
 extern JpegInfo jpegInfo;
 extern JpegInfoDpu jpegInfoDpu;
