@@ -32,6 +32,9 @@ int process_SOFn(JpegDecompressor *d);
 int process_DHT(JpegDecompressor *d);
 int process_SOS(JpegDecompressor *d);
 
+void decode_bitstream(JpegDecompressor *d);
+void inverse_dct_convert(JpegDecompressor *d);
+
 extern JpegInfo jpegInfo;
 extern JpegInfoDpu jpegInfoDpu;
 
