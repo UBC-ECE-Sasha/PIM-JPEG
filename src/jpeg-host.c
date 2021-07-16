@@ -244,65 +244,66 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     dpu_inputs[dpu_id].buffer = malloc(MAX_INPUT_LENGTH);
   }
 
-  dpu_id = 0;
-  for (uint32_t file_index = 0; file_index < remaining_file_count; file_index++) {
-    if (dpu_id >= dpus_per_rank) {
-      printf("More files than DPUs, abort!\n");
-      return 1;
-    }
-    struct stat st;
-    char *filename = input_files[file_index];
-
-    // read the length of the next input file
-    stat(filename, &st);
-    uint64_t file_length = st.st_size;
-    if (file_length > MAX_INPUT_LENGTH) {
-      printf("Skipping file %s (%lu > %u)\n", filename, file_length, MAX_INPUT_LENGTH);
-      continue;
-    }
-    dpu_inputs[dpu_id].file_length = file_length;
-    dpu_inputs[dpu_id].filename = filename;
-
-    // read the file into the descriptor
-    if (read_input_host(filename, file_length, dpu_inputs[dpu_id].buffer) < 0) {
-      printf("Skipping invalid file %s\n", input_files[file_index]);
-      break;
-    }
-    dpu_id++;
-  }
-
-  uint32_t dpus_to_use = dpu_id;
-  DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
-    printf("Rank ID: %d\n", rank_id);
-    if (!(rank_status & (1UL << rank_id))) {
-      rank_status |= (1UL << rank_id);
-      scale_rank(dpu_rank, dpu_inputs, dpus_to_use);
-    }
-  }
-
   dpu_output_t *dpu_outputs = calloc(dpus_per_rank, sizeof(dpu_output_t));
   short **MCU_buffer = malloc(sizeof(short *) * dpus_per_rank);
   for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
     MCU_buffer[dpu_id] = malloc(sizeof(short) * 87380 * 3 * 64);
   }
 
-  while (rank_status) {
-    int ret = check_for_completed_rank(dpus, &rank_status, dpu_outputs, MCU_buffer);
-    if (ret == -2) {
-      status = PROG_FAULT;
+  for (uint32_t i = 0; i < remaining_file_count; i += dpus_per_rank) {
+    for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
+      int file_index = i + dpu_id;
+      if (file_index >= remaining_file_count) {
+        break;
+      }
+
+      struct stat st;
+      char *filename = input_files[file_index];
+
+      // read the length of the next input file
+      stat(filename, &st);
+      uint64_t file_length = st.st_size;
+      if (file_length > MAX_INPUT_LENGTH) {
+        printf("Skipping file %s (%lu > %u)\n", filename, file_length, MAX_INPUT_LENGTH);
+        continue;
+      }
+      dpu_inputs[dpu_id].file_length = file_length;
+      dpu_inputs[dpu_id].filename = filename;
+
+      // read the file into the descriptor
+      if (read_input_host(filename, file_length, dpu_inputs[dpu_id].buffer) < 0) {
+        printf("Skipping invalid file %s\n", input_files[file_index]);
+        break;
+      }
     }
-  }
 
-  for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
-    write_bmp_dpu(dpu_inputs[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
-                  dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
-  }
+    uint32_t dpus_to_use = dpu_id;
+    DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
+      printf("Rank ID: %d\n", rank_id);
+      if (!(rank_status & (1UL << rank_id))) {
+        rank_status |= (1UL << rank_id);
+        scale_rank(dpu_rank, dpu_inputs, dpus_to_use);
+      }
+    }
 
-  DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
-    printf("Rank ID: %d\n", rank_id);
-    DPU_FOREACH(dpu_rank, dpu, dpu_id) {
-      printf("DPU ID: %d\n", dpu_id);
-      DPU_ASSERT(dpu_log_read(dpu, stdout));
+    while (rank_status) {
+      int ret = check_for_completed_rank(dpus, &rank_status, dpu_outputs, MCU_buffer);
+      if (ret == -2) {
+        status = PROG_FAULT;
+      }
+    }
+
+    for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
+      write_bmp_dpu(dpu_inputs[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
+                    dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
+    }
+
+    DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
+      printf("Rank ID: %d\n", rank_id);
+      DPU_FOREACH(dpu_rank, dpu, dpu_id) {
+        printf("DPU ID: %d\n", dpu_id);
+        DPU_ASSERT(dpu_log_read(dpu, stdout));
+      }
     }
   }
 
