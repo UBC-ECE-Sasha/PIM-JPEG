@@ -325,8 +325,8 @@ static int get_num_bits(JpegDecompressor *d, int num_bits) {
 }
 
 void inverse_dct_convert(JpegDecompressor *d) {
-  int row = jpegInfoDpu.rows_per_mcu * d->tasklet_id;
-  int end_row = jpegInfoDpu.rows_per_mcu * (d->tasklet_id + 1);
+  int row = jpegInfoDpu.rows_per_tasklet * d->tasklet_id;
+  int end_row = jpegInfoDpu.rows_per_tasklet * (d->tasklet_id + 1);
   if (row % 2 != 0) {
     row++;
   }
@@ -554,6 +554,80 @@ static void ycbcr_to_rgb_pixel(JpegDecompressor *d, int cache_index, int v, int 
       MCU_buffer_cache[d->tasklet_id][pixel] = r;
       MCU_buffer_cache[d->tasklet_id][64 + pixel] = g;
       MCU_buffer_cache[d->tasklet_id][128 + pixel] = b;
+    }
+  }
+}
+
+void horizontal_flip(JpegDecompressor *d) {
+  int row = jpegInfoDpu.rows_per_tasklet * d->tasklet_id;
+  int end_row = jpegInfoDpu.rows_per_tasklet * (d->tasklet_id + 1);
+  if (d->tasklet_id == NR_TASKLETS - 1) {
+    end_row = jpegInfo.mcu_height;
+  }
+
+  for (; row < end_row; row++) {
+    for (int col = 0; col < jpegInfo.mcu_width_real / 2; col++) {
+      for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
+        int mcu_index = ((row * jpegInfo.mcu_width_real + col) * 3 + color_index) << 6;
+        int target_mcu_index = mcu_index + (((jpegInfo.mcu_width_real - (col << 1) - 1) * 3) << 6);
+        for (int y = 0; y < 8; y++) {
+          for (int x = 0; x < 8; x++) {
+            int left_index = mcu_index + (y << 3) + x;
+            int right_index = target_mcu_index + (y << 3) + (7 - x);
+            short temp0 = MCU_buffer[0][left_index];
+            MCU_buffer[0][left_index] = MCU_buffer[0][right_index];
+            MCU_buffer[0][right_index] = temp0;
+          }
+        }
+      }
+    }
+  }
+}
+
+void crop(JpegDecompressor *d) {
+  // temporary start position: 160, 80
+  // width height: 600, 440
+}
+
+void jpeg_scale(void) {
+  int x_scale_factor = 2;
+  int y_scale_factor = 2;
+
+  for (int row = 0; row < jpegInfo.mcu_height_real; row++) {
+    for (int col = 0; col < jpegInfo.mcu_width_real; col++) {
+      for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
+        int mcu_index = ((row * jpegInfo.mcu_width_real + col) * 3 + color_index) << 6;
+        for (int y = 0; y < 4; y++) {
+          for (int x = 0; x < 4; x++) {
+            int sum = MCU_buffer[0][mcu_index + y * 2 * 8 + x * 2] + MCU_buffer[0][mcu_index + y * 2 * 8 + x * 2 + 1] +
+                      MCU_buffer[0][mcu_index + (y * 2 + 1) * 8 + x * 2] +
+                      MCU_buffer[0][mcu_index + (y * 2 + 1) * 8 + x * 2 + 1];
+            MCU_buffer[0][mcu_index + y * 8 + x] = sum >> 2;
+          }
+        }
+      }
+    }
+  }
+
+  for (int row = 0; row < jpegInfo.mcu_height_real / 2; row++) {
+    for (int col = 0; col < jpegInfo.mcu_width_real / 2; col++) {
+      for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
+        int mcu_index = ((row * jpegInfo.mcu_width_real + col) * 3 + color_index) << 6;
+
+        int top_left = ((row * 2 * jpegInfo.mcu_width_real + col * 2) * 3 + color_index) << 6;
+        int top_right = ((row * 2 * jpegInfo.mcu_width_real + col * 2 + 1) * 3 + color_index) << 6;
+        int bottom_left = (((row * 2 + 1) * jpegInfo.mcu_width_real + col * 2) * 3 + color_index) << 6;
+        int bottom_right = (((row * 2 + 1) * jpegInfo.mcu_width_real + col * 2 + 1) * 3 + color_index) << 6;
+
+        for (int y = 0; y < 4; y++) {
+          for (int x = 0; x < 4; x++) {
+            MCU_buffer[0][mcu_index + y * 8 + x] = MCU_buffer[0][top_left + y * 8 + x];
+            MCU_buffer[0][mcu_index + y * 8 + x + 4] = MCU_buffer[0][top_right + y * 8 + x];
+            MCU_buffer[0][mcu_index + (y + 4) * 8 + x] = MCU_buffer[0][bottom_left + y * 8 + x];
+            MCU_buffer[0][mcu_index + (y + 4) * 8 + x + 4] = MCU_buffer[0][bottom_right + y * 8 + x];
+          }
+        }
+      }
     }
   }
 }

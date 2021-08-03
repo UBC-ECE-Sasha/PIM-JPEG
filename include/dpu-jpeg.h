@@ -14,7 +14,7 @@ typedef struct JpegInfoDpu {
   uint32_t mcu_end_index[NR_TASKLETS];   // end index of each tasklet in the 2D MRAM MCU buffer
   uint32_t mcu_start_index[NR_TASKLETS]; // start index of each tasklet in the 2D MRAM MCU buffer
   int dc_offset[NR_TASKLETS - 1][3];     // offset to the 3 DC coefficients from tasklet i to tasklet i + 1
-  uint32_t rows_per_mcu;
+  uint32_t rows_per_tasklet;
 } JpegInfoDpu;
 
 void init_file_reader_index(JpegDecompressor *d);
@@ -34,6 +34,10 @@ int process_SOS(JpegDecompressor *d);
 
 void decode_bitstream(JpegDecompressor *d);
 void inverse_dct_convert(JpegDecompressor *d);
+
+void horizontal_flip(JpegDecompressor *d);
+void crop(JpegDecompressor *d);
+void jpeg_scale(void);
 
 extern JpegInfo jpegInfo;
 extern JpegInfoDpu jpegInfoDpu;

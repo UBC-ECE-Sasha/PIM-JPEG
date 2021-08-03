@@ -190,5 +190,11 @@ int main() {
 
   inverse_dct_convert(&decompressor);
 
+  // TODO: make scaling work with multiple tasklets
+  if (decompressor.tasklet_id == 0) {
+    // jpeg_scale();
+  }
+  horizontal_flip(&decompressor);
+
   return 0;
 }

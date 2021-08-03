@@ -107,5 +107,5 @@ static void initialize_MCU_height_width() {
   if (jpegInfo.max_h_samp_factor == 2 && jpegInfo.mcu_width_real % 2 == 1) {
     jpegInfo.mcu_width_real++;
   }
-  jpegInfoDpu.rows_per_mcu = jpegInfo.mcu_height_real / NR_TASKLETS;
+  jpegInfoDpu.rows_per_tasklet = jpegInfo.mcu_height_real / NR_TASKLETS;
 }
