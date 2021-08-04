@@ -193,6 +193,12 @@ int main() {
   // TODO: make scaling work with multiple tasklets
   if (decompressor.tasklet_id == 0) {
     // jpeg_scale();
+
+    // crop(&decompressor);
+
+    output.image_width = jpegInfo.image_width;
+    output.image_height = jpegInfo.image_height;
+    output.mcu_width_real = jpegInfo.mcu_width_real;
   }
   horizontal_flip(&decompressor);
 

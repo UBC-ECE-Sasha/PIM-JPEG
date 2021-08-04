@@ -7,7 +7,8 @@ __mram_noinit short MCU_buffer[NR_TASKLETS][16776960 / NR_TASKLETS];
 
 #define PREWRITE_SIZE 768
 __dma_aligned short MCU_buffer_cache[NR_TASKLETS][PREWRITE_SIZE];
-#define MCU_READ_WRITE_SIZE 128
+#define MCU_READ_WRITE_SIZE0 128
+#define MCU_READ_WRITE_SIZE1 384
 
 #define INDEX_OFFSET 64
 #define DC_COEFF_OFFSET 192
@@ -25,11 +26,10 @@ static void ycbcr_to_rgb_pixel(JpegDecompressor *d, int cache_index, int v, int 
 void decode_bitstream(JpegDecompressor *d) {
   short previous_dcs[3] = {0};
   int restart_interval = jpegInfo.restart_interval * jpegInfo.max_h_samp_factor * jpegInfo.max_v_samp_factor;
-  int row, col;
   int synch_mcu_index = 0;
 
-  for (row = 0; row < jpegInfo.mcu_height; row += jpegInfo.max_v_samp_factor) {
-    for (col = 0; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
+  for (int row = 0; row < jpegInfo.mcu_height; row += jpegInfo.max_v_samp_factor) {
+    for (int col = 0; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
       if (is_eof(d)) {
         // goto sync0;
         synchronise_tasklets(d, row, col, previous_dcs);
@@ -51,7 +51,7 @@ void decode_bitstream(JpegDecompressor *d) {
             }
 
             int mcu_index = (((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 + color_index) << 6;
-            mram_write(MCU_buffer_cache[d->tasklet_id], &MCU_buffer[d->tasklet_id][mcu_index], MCU_READ_WRITE_SIZE);
+            mram_write(MCU_buffer_cache[d->tasklet_id], &MCU_buffer[d->tasklet_id][mcu_index], MCU_READ_WRITE_SIZE0);
           }
         }
       }
@@ -105,7 +105,7 @@ static void synchronise_tasklets(JpegDecompressor *d, int row, int col, short *p
                 MCU_buffer_cache[d->tasklet_id + 1][INDEX_OFFSET + next_tasklet_mcu_blocks_elapsed];
 
             int mcu_index = (((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 + color_index) << 6;
-            mram_write(MCU_buffer_cache[d->tasklet_id], &MCU_buffer[d->tasklet_id][mcu_index], MCU_READ_WRITE_SIZE);
+            mram_write(MCU_buffer_cache[d->tasklet_id], &MCU_buffer[d->tasklet_id][mcu_index], MCU_READ_WRITE_SIZE0);
 
             if (current_tasklet_file_index < next_tasklet_file_index) {
               // Tasklet i needs to decode more blocks
@@ -175,12 +175,12 @@ static void concat_adjust_mcus(JpegDecompressor *d, int row, int col) {
         for (int y = 0; y < jpegInfo.color_components[color_index].v_samp_factor; y++) {
           for (int x = 0; x < jpegInfo.color_components[color_index].h_samp_factor; x++) {
             int mcu_index = (((tasklet_row + y) * jpegInfo.mcu_width_real + (tasklet_col + x)) * 3 + color_index) << 6;
-            mram_read(&MCU_buffer[tasklet_index][mcu_index], MCU_buffer_cache[0], MCU_READ_WRITE_SIZE);
+            mram_read(&MCU_buffer[tasklet_index][mcu_index], MCU_buffer_cache[0], MCU_READ_WRITE_SIZE0);
 
             MCU_buffer_cache[0][0] += dc_offset[color_index];
 
             mcu_index = (((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 + color_index) << 6;
-            mram_write(MCU_buffer_cache[0], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE);
+            mram_write(MCU_buffer_cache[0], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE0);
           }
         }
       }
@@ -344,7 +344,7 @@ void inverse_dct_convert(JpegDecompressor *d) {
           for (int x = 0; x < jpegInfo.color_components[color_index].h_samp_factor; x++) {
             int mcu_index = (((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 + color_index) << 6;
             int cache_index = ((y << 8) + (y << 7)) + ((x << 7) + (x << 6)) + (color_index << 6);
-            mram_read(&MCU_buffer[0][mcu_index], &MCU_buffer_cache[d->tasklet_id][cache_index], MCU_READ_WRITE_SIZE);
+            mram_read(&MCU_buffer[0][mcu_index], &MCU_buffer_cache[d->tasklet_id][cache_index], MCU_READ_WRITE_SIZE0);
 
             // Compute inverse DCT with ANN algorithm
             inverse_dct_component(d, cache_index);
@@ -362,7 +362,7 @@ void inverse_dct_convert(JpegDecompressor *d) {
 
           ycbcr_to_rgb_pixel(d, cache_index, y, x);
 
-          mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE * 3);
+          mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE1);
         }
       }
     }
@@ -567,19 +567,25 @@ void horizontal_flip(JpegDecompressor *d) {
 
   for (; row < end_row; row++) {
     for (int col = 0; col < jpegInfo.mcu_width_real / 2; col++) {
+      int mcu_index = ((row * jpegInfo.mcu_width_real + col) * 3) << 6;
+      int target_mcu_index = mcu_index + (((jpegInfo.mcu_width_real - (col << 1) - 1) * 3) << 6);
+      mram_read(&MCU_buffer[0][mcu_index], &MCU_buffer_cache[d->tasklet_id][0], MCU_READ_WRITE_SIZE1);
+      mram_read(&MCU_buffer[0][target_mcu_index], &MCU_buffer_cache[d->tasklet_id][192], MCU_READ_WRITE_SIZE1);
+
       for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
-        int mcu_index = ((row * jpegInfo.mcu_width_real + col) * 3 + color_index) << 6;
-        int target_mcu_index = mcu_index + (((jpegInfo.mcu_width_real - (col << 1) - 1) * 3) << 6);
         for (int y = 0; y < 8; y++) {
           for (int x = 0; x < 8; x++) {
-            int left_index = mcu_index + (y << 3) + x;
-            int right_index = target_mcu_index + (y << 3) + (7 - x);
-            short temp0 = MCU_buffer[0][left_index];
-            MCU_buffer[0][left_index] = MCU_buffer[0][right_index];
-            MCU_buffer[0][right_index] = temp0;
+            int left_index = (y << 3) + x + (color_index << 6);
+            int right_index = 192 + (y << 3) + (7 - x) + (color_index << 6);
+            short temp0 = MCU_buffer_cache[d->tasklet_id][left_index];
+            MCU_buffer_cache[d->tasklet_id][left_index] = MCU_buffer_cache[d->tasklet_id][right_index];
+            MCU_buffer_cache[d->tasklet_id][right_index] = temp0;
           }
         }
       }
+
+      mram_write(&MCU_buffer_cache[d->tasklet_id][0], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE1);
+      mram_write(&MCU_buffer_cache[d->tasklet_id][192], &MCU_buffer[0][target_mcu_index], MCU_READ_WRITE_SIZE1);
     }
   }
 }
@@ -587,6 +593,28 @@ void horizontal_flip(JpegDecompressor *d) {
 void crop(JpegDecompressor *d) {
   // temporary start position: 160, 80
   // width height: 600, 440
+  int start_x = 400, start_y = 320, new_width = 400, new_height = 320;
+  int new_mcu_height = (new_height + 7) / 8;
+  int new_mcu_width = (new_width + 7) / 8;
+  int start_row = start_y / 8;
+  int start_col = start_x / 8;
+
+  for (int row = 0; row < new_mcu_height; row++) {
+    for (int col = 0; col < new_mcu_width; col++) {
+      for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
+        int mcu_index = (((row + start_row) * jpegInfo.mcu_width_real + (col + start_col)) * 3 + color_index) << 6;
+        int new_mcu_index = ((row * new_mcu_width + col) * 3 + color_index) << 6;
+        for (int i = 0; i < 64; i++) {
+          MCU_buffer[0][new_mcu_index + i] = MCU_buffer[0][mcu_index + i];
+        }
+      }
+    }
+  }
+
+  jpegInfo.image_width = new_width;
+  jpegInfo.image_height = new_height;
+  jpegInfo.mcu_width_real = new_mcu_width;
+  jpegInfo.mcu_height_real = new_mcu_height;
 }
 
 void jpeg_scale(void) {
