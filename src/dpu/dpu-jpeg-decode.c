@@ -625,21 +625,19 @@ void jpeg_scale(JpegDecompressor *d, int x_scale_factor, int y_scale_factor) {
     for (int col = 0; col < jpegInfo.mcu_width_real; col++) {
       for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
         int mcu_index = ((row * jpegInfo.mcu_width_real + col) * 3 + color_index) << 6;
-        // mram_read(&MCU_buffer[0][mcu_index], &MCU_buffer_cache[d->tasklet_id][0], MCU_READ_WRITE_SIZE0);
+        mram_read(&MCU_buffer[0][mcu_index], &MCU_buffer_cache[d->tasklet_id][0], MCU_READ_WRITE_SIZE0);
         for (int y = 0; y < temp0; y++) {
           for (int x = 0; x < temp1; x++) {
             int sum = 0;
             for (int i = 0; i < y_scale_factor; i++) {
               for (int j = 0; j < x_scale_factor; j++) {
-                sum += MCU_buffer[0][mcu_index + ((y * y_scale_factor + i) << 3) + x * x_scale_factor + j];
-                // sum += MCU_buffer_cache[d->tasklet_id][((y * y_scale_factor + i) << 3) + x * x_scale_factor + j];
+                sum += MCU_buffer_cache[d->tasklet_id][((y * y_scale_factor + i) << 3) + x * x_scale_factor + j];
               }
             }
-            MCU_buffer[0][mcu_index + (y << 3) + x] = sum / (x_scale_factor * y_scale_factor);
-            // MCU_buffer_cache[d->tasklet_id][(y << 3) + x] = sum / (x_scale_factor * y_scale_factor);
+            MCU_buffer_cache[d->tasklet_id][(y << 3) + x] = sum / (x_scale_factor * y_scale_factor);
           }
         }
-        // mram_write(&MCU_buffer_cache[d->tasklet_id][0], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE0);
+        mram_write(&MCU_buffer_cache[d->tasklet_id][0], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE0);
       }
     }
   }
@@ -651,35 +649,24 @@ void jpeg_scale(JpegDecompressor *d, int x_scale_factor, int y_scale_factor) {
     for (int col = 0; col < new_mcu_width; col++) {
       for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
         int mcu_index = ((row * new_mcu_width + col) * 3 + color_index) << 6;
-
-        // int top_left = ((row * 2 * jpegInfo.mcu_width_real + col * 2) * 3 + color_index) << 6;
-        // int top_right = ((row * 2 * jpegInfo.mcu_width_real + col * 2 + 1) * 3 + color_index) << 6;
-        // int bottom_left = (((row * 2 + 1) * jpegInfo.mcu_width_real + col * 2) * 3 + color_index) << 6;
-        // int bottom_right = (((row * 2 + 1) * jpegInfo.mcu_width_real + col * 2 + 1) * 3 + color_index) << 6;
-
-        // for (int y = 0; y < temp0; y++) {
-        //   for (int x = 0; x < temp1; x++) {
-        //     MCU_buffer[0][mcu_index + y * 8 + x] = MCU_buffer[0][top_left + y * 8 + x];
-        //     MCU_buffer[0][mcu_index + y * 8 + x + 4] = MCU_buffer[0][top_right + y * 8 + x];
-        //     MCU_buffer[0][mcu_index + (y + 4) * 8 + x] = MCU_buffer[0][bottom_left + y * 8 + x];
-        //     MCU_buffer[0][mcu_index + (y + 4) * 8 + x + 4] = MCU_buffer[0][bottom_right + y * 8 + x];
-        //   }
-        // }
+        int general_portion_index =
+            (((row * y_scale_factor) * jpegInfo.mcu_width_real + col * x_scale_factor) * 3 + color_index) << 6;
 
         for (int i = 0; i < y_scale_factor; i++) {
           for (int j = 0; j < x_scale_factor; j++) {
-            int portion_index =
-                (((row * y_scale_factor + i) * jpegInfo.mcu_width_real + col * x_scale_factor + j) * 3 + color_index)
-                << 6;
+            int exact_portion_index = general_portion_index + (((i * jpegInfo.mcu_width_real + j) * 3) << 6);
+            mram_read(&MCU_buffer[0][exact_portion_index], &MCU_buffer_cache[d->tasklet_id][64], MCU_READ_WRITE_SIZE0);
 
             for (int y = 0; y < temp0; y++) {
               for (int x = 0; x < temp1; x++) {
-                MCU_buffer[0][mcu_index + (y + i * temp0) * 8 + (x + j * temp1)] =
-                    MCU_buffer[0][portion_index + y * 8 + x];
+                MCU_buffer_cache[d->tasklet_id][((y + i * temp0) << 3) + (x + j * temp1)] =
+                    MCU_buffer_cache[d->tasklet_id][64 + y * 8 + x];
               }
             }
           }
         }
+
+        mram_write(&MCU_buffer_cache[d->tasklet_id][0], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE0);
       }
     }
   }
