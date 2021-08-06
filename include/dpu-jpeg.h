@@ -36,8 +36,8 @@ void decode_bitstream(JpegDecompressor *d);
 void inverse_dct_convert(JpegDecompressor *d);
 
 void horizontal_flip(JpegDecompressor *d);
-void crop(JpegDecompressor *d);
-void jpeg_scale(void);
+void crop(JpegDecompressor *d, int start_x, int start_y, int new_width, int new_height);
+void jpeg_scale(JpegDecompressor *d, int x_scale_factor, int y_scale_factor);
 
 extern JpegInfo jpegInfo;
 extern JpegInfoDpu jpegInfoDpu;

@@ -14,6 +14,7 @@ JpegInfoDpu jpegInfoDpu;
 
 BARRIER_INIT(init_barrier, NR_TASKLETS);
 BARRIER_INIT(idct_barrier, NR_TASKLETS);
+BARRIER_INIT(crop_barrier, NR_TASKLETS);
 
 #define DEBUG 0
 
@@ -190,17 +191,31 @@ int main() {
 
   inverse_dct_convert(&decompressor);
 
-  // TODO: make scaling work with multiple tasklets
-  if (decompressor.tasklet_id == 0) {
-    // jpeg_scale();
+  barrier_wait(&crop_barrier);
 
-    // crop(&decompressor);
+  if (decompressor.tasklet_id == 0) {
+    // TODO: WINDOW_ALIGN second argument can be an input from CPU
+    uint16_t aligned_width = WINDOW_ALIGN(jpegInfo.image_width, 256);
+    uint16_t aligned_height = WINDOW_ALIGN(jpegInfo.image_height, 256);
+    uint16_t new_width = aligned_height < aligned_width ? aligned_height : aligned_width;
+
+    int start_x = (jpegInfo.image_width - new_width) >> 1;
+    int start_y = (jpegInfo.image_height - new_width) >> 1;
+    start_x = ALIGN(start_x, 8);
+    start_y = ALIGN(start_y, 8);
+
+    crop(&decompressor, start_x, start_y, new_width, new_width);
+
+    int scale_factor = new_width / 256;
+    if (scale_factor != 1) {
+      jpeg_scale(&decompressor, scale_factor, scale_factor);
+    }
 
     output.image_width = jpegInfo.image_width;
     output.image_height = jpegInfo.image_height;
     output.mcu_width_real = jpegInfo.mcu_width_real;
   }
-  horizontal_flip(&decompressor);
+  // horizontal_flip(&decompressor);
 
   return 0;
 }

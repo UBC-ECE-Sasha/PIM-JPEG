@@ -590,10 +590,9 @@ void horizontal_flip(JpegDecompressor *d) {
   }
 }
 
-void crop(JpegDecompressor *d) {
-  // temporary start position: 160, 80
-  // width height: 600, 440
-  int start_x = 400, start_y = 320, new_width = 400, new_height = 320;
+// Start position and cropped width, height must be 8 pixel aligned
+void crop(JpegDecompressor *d, int start_x, int start_y, int new_width, int new_height) {
+  // TODO: think about whether it is possible to use multiple tasklets
   int new_mcu_height = (new_height + 7) / 8;
   int new_mcu_width = (new_width + 7) / 8;
   int start_row = start_y / 8;
@@ -601,13 +600,10 @@ void crop(JpegDecompressor *d) {
 
   for (int row = 0; row < new_mcu_height; row++) {
     for (int col = 0; col < new_mcu_width; col++) {
-      for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
-        int mcu_index = (((row + start_row) * jpegInfo.mcu_width_real + (col + start_col)) * 3 + color_index) << 6;
-        int new_mcu_index = ((row * new_mcu_width + col) * 3 + color_index) << 6;
-        for (int i = 0; i < 64; i++) {
-          MCU_buffer[0][new_mcu_index + i] = MCU_buffer[0][mcu_index + i];
-        }
-      }
+      int mcu_index = (((row + start_row) * jpegInfo.mcu_width_real + (col + start_col)) * 3) << 6;
+      int new_mcu_index = ((row * new_mcu_width + col) * 3) << 6;
+      mram_read(&MCU_buffer[0][mcu_index], &MCU_buffer_cache[d->tasklet_id][0], MCU_READ_WRITE_SIZE1);
+      mram_write(&MCU_buffer_cache[d->tasklet_id][0], &MCU_buffer[0][new_mcu_index], MCU_READ_WRITE_SIZE1);
     }
   }
 
@@ -617,45 +613,79 @@ void crop(JpegDecompressor *d) {
   jpegInfo.mcu_height_real = new_mcu_height;
 }
 
-void jpeg_scale(void) {
-  int x_scale_factor = 2;
-  int y_scale_factor = 2;
+// Only scales by multiples of 2
+void jpeg_scale(JpegDecompressor *d, int x_scale_factor, int y_scale_factor) {
+  // TODO: implement multiple tasklets
+  int temp0 = 8 / y_scale_factor;
+  int temp1 = 8 / x_scale_factor;
 
+  // TODO: use bit shifting instead of multiply/division
+  // TODO: use mram_read and mram_write
   for (int row = 0; row < jpegInfo.mcu_height_real; row++) {
     for (int col = 0; col < jpegInfo.mcu_width_real; col++) {
       for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
         int mcu_index = ((row * jpegInfo.mcu_width_real + col) * 3 + color_index) << 6;
-        for (int y = 0; y < 4; y++) {
-          for (int x = 0; x < 4; x++) {
-            int sum = MCU_buffer[0][mcu_index + y * 2 * 8 + x * 2] + MCU_buffer[0][mcu_index + y * 2 * 8 + x * 2 + 1] +
-                      MCU_buffer[0][mcu_index + (y * 2 + 1) * 8 + x * 2] +
-                      MCU_buffer[0][mcu_index + (y * 2 + 1) * 8 + x * 2 + 1];
-            MCU_buffer[0][mcu_index + y * 8 + x] = sum >> 2;
+        // mram_read(&MCU_buffer[0][mcu_index], &MCU_buffer_cache[d->tasklet_id][0], MCU_READ_WRITE_SIZE0);
+        for (int y = 0; y < temp0; y++) {
+          for (int x = 0; x < temp1; x++) {
+            int sum = 0;
+            for (int i = 0; i < y_scale_factor; i++) {
+              for (int j = 0; j < x_scale_factor; j++) {
+                sum += MCU_buffer[0][mcu_index + ((y * y_scale_factor + i) << 3) + x * x_scale_factor + j];
+                // sum += MCU_buffer_cache[d->tasklet_id][((y * y_scale_factor + i) << 3) + x * x_scale_factor + j];
+              }
+            }
+            MCU_buffer[0][mcu_index + (y << 3) + x] = sum / (x_scale_factor * y_scale_factor);
+            // MCU_buffer_cache[d->tasklet_id][(y << 3) + x] = sum / (x_scale_factor * y_scale_factor);
           }
         }
+        // mram_write(&MCU_buffer_cache[d->tasklet_id][0], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE0);
       }
     }
   }
 
-  for (int row = 0; row < jpegInfo.mcu_height_real / 2; row++) {
-    for (int col = 0; col < jpegInfo.mcu_width_real / 2; col++) {
+  int new_mcu_width = jpegInfo.mcu_width_real / x_scale_factor;
+  int new_mcu_height = jpegInfo.mcu_height_real / y_scale_factor;
+
+  for (int row = 0; row < new_mcu_height; row++) {
+    for (int col = 0; col < new_mcu_width; col++) {
       for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
-        int mcu_index = ((row * jpegInfo.mcu_width_real + col) * 3 + color_index) << 6;
+        int mcu_index = ((row * new_mcu_width + col) * 3 + color_index) << 6;
 
-        int top_left = ((row * 2 * jpegInfo.mcu_width_real + col * 2) * 3 + color_index) << 6;
-        int top_right = ((row * 2 * jpegInfo.mcu_width_real + col * 2 + 1) * 3 + color_index) << 6;
-        int bottom_left = (((row * 2 + 1) * jpegInfo.mcu_width_real + col * 2) * 3 + color_index) << 6;
-        int bottom_right = (((row * 2 + 1) * jpegInfo.mcu_width_real + col * 2 + 1) * 3 + color_index) << 6;
+        // int top_left = ((row * 2 * jpegInfo.mcu_width_real + col * 2) * 3 + color_index) << 6;
+        // int top_right = ((row * 2 * jpegInfo.mcu_width_real + col * 2 + 1) * 3 + color_index) << 6;
+        // int bottom_left = (((row * 2 + 1) * jpegInfo.mcu_width_real + col * 2) * 3 + color_index) << 6;
+        // int bottom_right = (((row * 2 + 1) * jpegInfo.mcu_width_real + col * 2 + 1) * 3 + color_index) << 6;
 
-        for (int y = 0; y < 4; y++) {
-          for (int x = 0; x < 4; x++) {
-            MCU_buffer[0][mcu_index + y * 8 + x] = MCU_buffer[0][top_left + y * 8 + x];
-            MCU_buffer[0][mcu_index + y * 8 + x + 4] = MCU_buffer[0][top_right + y * 8 + x];
-            MCU_buffer[0][mcu_index + (y + 4) * 8 + x] = MCU_buffer[0][bottom_left + y * 8 + x];
-            MCU_buffer[0][mcu_index + (y + 4) * 8 + x + 4] = MCU_buffer[0][bottom_right + y * 8 + x];
+        // for (int y = 0; y < temp0; y++) {
+        //   for (int x = 0; x < temp1; x++) {
+        //     MCU_buffer[0][mcu_index + y * 8 + x] = MCU_buffer[0][top_left + y * 8 + x];
+        //     MCU_buffer[0][mcu_index + y * 8 + x + 4] = MCU_buffer[0][top_right + y * 8 + x];
+        //     MCU_buffer[0][mcu_index + (y + 4) * 8 + x] = MCU_buffer[0][bottom_left + y * 8 + x];
+        //     MCU_buffer[0][mcu_index + (y + 4) * 8 + x + 4] = MCU_buffer[0][bottom_right + y * 8 + x];
+        //   }
+        // }
+
+        for (int i = 0; i < y_scale_factor; i++) {
+          for (int j = 0; j < x_scale_factor; j++) {
+            int portion_index =
+                (((row * y_scale_factor + i) * jpegInfo.mcu_width_real + col * x_scale_factor + j) * 3 + color_index)
+                << 6;
+
+            for (int y = 0; y < temp0; y++) {
+              for (int x = 0; x < temp1; x++) {
+                MCU_buffer[0][mcu_index + (y + i * temp0) * 8 + (x + j * temp1)] =
+                    MCU_buffer[0][portion_index + y * 8 + x];
+              }
+            }
           }
         }
       }
     }
   }
+
+  jpegInfo.image_width = jpegInfo.image_width / x_scale_factor;
+  jpegInfo.image_height = jpegInfo.image_height / y_scale_factor;
+  jpegInfo.mcu_width_real = new_mcu_width;
+  jpegInfo.mcu_height_real = new_mcu_height;
 }
