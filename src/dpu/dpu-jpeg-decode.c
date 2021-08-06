@@ -593,10 +593,10 @@ void horizontal_flip(JpegDecompressor *d) {
 // Start position and cropped width, height must be 8 pixel aligned
 void crop(JpegDecompressor *d, int start_x, int start_y, int new_width, int new_height) {
   // TODO: think about whether it is possible to use multiple tasklets
-  int new_mcu_height = (new_height + 7) / 8;
-  int new_mcu_width = (new_width + 7) / 8;
-  int start_row = start_y / 8;
-  int start_col = start_x / 8;
+  int new_mcu_height = (new_height + 7) >> 3;
+  int new_mcu_width = (new_width + 7) >> 3;
+  int start_row = start_y >> 3;
+  int start_col = start_x >> 3;
 
   for (int row = 0; row < new_mcu_height; row++) {
     for (int col = 0; col < new_mcu_width; col++) {
@@ -616,11 +616,16 @@ void crop(JpegDecompressor *d, int start_x, int start_y, int new_width, int new_
 // Only scales by multiples of 2
 void jpeg_scale(JpegDecompressor *d, int x_scale_factor, int y_scale_factor) {
   // TODO: implement multiple tasklets
-  int temp0 = 8 / y_scale_factor;
-  int temp1 = 8 / x_scale_factor;
+  int x_shift = 1, y_shift = 1;
+  while ((1 << x_shift) < x_scale_factor) {
+    x_shift++;
+  }
+  while ((1 << y_shift) < y_scale_factor) {
+    y_shift++;
+  }
+  int temp0 = 8 >> y_shift;
+  int temp1 = 8 >> x_shift;
 
-  // TODO: use bit shifting instead of multiply/division
-  // TODO: use mram_read and mram_write
   for (int row = 0; row < jpegInfo.mcu_height_real; row++) {
     for (int col = 0; col < jpegInfo.mcu_width_real; col++) {
       for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
@@ -631,10 +636,10 @@ void jpeg_scale(JpegDecompressor *d, int x_scale_factor, int y_scale_factor) {
             int sum = 0;
             for (int i = 0; i < y_scale_factor; i++) {
               for (int j = 0; j < x_scale_factor; j++) {
-                sum += MCU_buffer_cache[d->tasklet_id][((y * y_scale_factor + i) << 3) + x * x_scale_factor + j];
+                sum += MCU_buffer_cache[d->tasklet_id][(((y << y_shift) + i) << 3) + (x << x_shift) + j];
               }
             }
-            MCU_buffer_cache[d->tasklet_id][(y << 3) + x] = sum / (x_scale_factor * y_scale_factor);
+            MCU_buffer_cache[d->tasklet_id][(y << 3) + x] = sum >> (x_shift + y_shift);
           }
         }
         mram_write(&MCU_buffer_cache[d->tasklet_id][0], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE0);
@@ -642,15 +647,15 @@ void jpeg_scale(JpegDecompressor *d, int x_scale_factor, int y_scale_factor) {
     }
   }
 
-  int new_mcu_width = jpegInfo.mcu_width_real / x_scale_factor;
-  int new_mcu_height = jpegInfo.mcu_height_real / y_scale_factor;
+  int new_mcu_width = jpegInfo.mcu_width_real >> x_shift;
+  int new_mcu_height = jpegInfo.mcu_height_real >> y_shift;
 
   for (int row = 0; row < new_mcu_height; row++) {
     for (int col = 0; col < new_mcu_width; col++) {
       for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
         int mcu_index = ((row * new_mcu_width + col) * 3 + color_index) << 6;
-        int general_portion_index =
-            (((row * y_scale_factor) * jpegInfo.mcu_width_real + col * x_scale_factor) * 3 + color_index) << 6;
+        int general_portion_index = (((row << y_shift) * jpegInfo.mcu_width_real + (col << x_shift)) * 3 + color_index)
+                                    << 6;
 
         for (int i = 0; i < y_scale_factor; i++) {
           for (int j = 0; j < x_scale_factor; j++) {
@@ -671,8 +676,8 @@ void jpeg_scale(JpegDecompressor *d, int x_scale_factor, int y_scale_factor) {
     }
   }
 
-  jpegInfo.image_width = jpegInfo.image_width / x_scale_factor;
-  jpegInfo.image_height = jpegInfo.image_height / y_scale_factor;
+  jpegInfo.image_width = jpegInfo.image_width >> x_shift;
+  jpegInfo.image_height = jpegInfo.image_height >> y_shift;
   jpegInfo.mcu_width_real = new_mcu_width;
   jpegInfo.mcu_height_real = new_mcu_height;
 }
