@@ -1,4 +1,5 @@
 #include <mram.h>
+#include <mutex.h>
 #include <stdio.h>
 
 #include "dpu-jpeg.h"
@@ -558,38 +559,6 @@ static void ycbcr_to_rgb_pixel(JpegDecompressor *d, int cache_index, int v, int 
   }
 }
 
-void horizontal_flip(JpegDecompressor *d) {
-  int row = jpegInfoDpu.rows_per_tasklet * d->tasklet_id;
-  int end_row = jpegInfoDpu.rows_per_tasklet * (d->tasklet_id + 1);
-  if (d->tasklet_id == NR_TASKLETS - 1) {
-    end_row = jpegInfo.mcu_height;
-  }
-
-  for (; row < end_row; row++) {
-    for (int col = 0; col < jpegInfo.mcu_width_real / 2; col++) {
-      int mcu_index = ((row * jpegInfo.mcu_width_real + col) * 3) << 6;
-      int target_mcu_index = mcu_index + (((jpegInfo.mcu_width_real - (col << 1) - 1) * 3) << 6);
-      mram_read(&MCU_buffer[0][mcu_index], &MCU_buffer_cache[d->tasklet_id][0], MCU_READ_WRITE_SIZE1);
-      mram_read(&MCU_buffer[0][target_mcu_index], &MCU_buffer_cache[d->tasklet_id][192], MCU_READ_WRITE_SIZE1);
-
-      for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
-        for (int y = 0; y < 8; y++) {
-          for (int x = 0; x < 8; x++) {
-            int left_index = (y << 3) + x + (color_index << 6);
-            int right_index = 192 + (y << 3) + (7 - x) + (color_index << 6);
-            short temp0 = MCU_buffer_cache[d->tasklet_id][left_index];
-            MCU_buffer_cache[d->tasklet_id][left_index] = MCU_buffer_cache[d->tasklet_id][right_index];
-            MCU_buffer_cache[d->tasklet_id][right_index] = temp0;
-          }
-        }
-      }
-
-      mram_write(&MCU_buffer_cache[d->tasklet_id][0], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE1);
-      mram_write(&MCU_buffer_cache[d->tasklet_id][192], &MCU_buffer[0][target_mcu_index], MCU_READ_WRITE_SIZE1);
-    }
-  }
-}
-
 // Start position and cropped width, height must be 8 pixel aligned
 void crop(JpegDecompressor *d, int start_x, int start_y, int new_width, int new_height) {
   // TODO: think about whether it is possible to use multiple tasklets
@@ -680,4 +649,66 @@ void jpeg_scale(JpegDecompressor *d, int x_scale_factor, int y_scale_factor) {
   jpegInfo.image_height = jpegInfo.image_height >> y_shift;
   jpegInfo.mcu_width_real = new_mcu_width;
   jpegInfo.mcu_height_real = new_mcu_height;
+}
+
+void horizontal_flip(JpegDecompressor *d) {
+  int row = jpegInfoDpu.rows_per_tasklet * d->tasklet_id;
+  int end_row = jpegInfoDpu.rows_per_tasklet * (d->tasklet_id + 1);
+  if (d->tasklet_id == NR_TASKLETS - 1) {
+    end_row = jpegInfo.mcu_height;
+  }
+
+  for (; row < end_row; row++) {
+    for (int col = 0; col < jpegInfo.mcu_width_real / 2; col++) {
+      int mcu_index = ((row * jpegInfo.mcu_width_real + col) * 3) << 6;
+      int target_mcu_index = mcu_index + (((jpegInfo.mcu_width_real - (col << 1) - 1) * 3) << 6);
+      mram_read(&MCU_buffer[0][mcu_index], &MCU_buffer_cache[d->tasklet_id][0], MCU_READ_WRITE_SIZE1);
+      mram_read(&MCU_buffer[0][target_mcu_index], &MCU_buffer_cache[d->tasklet_id][192], MCU_READ_WRITE_SIZE1);
+
+      for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
+        for (int y = 0; y < 8; y++) {
+          for (int x = 0; x < 8; x++) {
+            int left_index = (y << 3) + x + (color_index << 6);
+            int right_index = 192 + (y << 3) + (7 - x) + (color_index << 6);
+            short temp0 = MCU_buffer_cache[d->tasklet_id][left_index];
+            MCU_buffer_cache[d->tasklet_id][left_index] = MCU_buffer_cache[d->tasklet_id][right_index];
+            MCU_buffer_cache[d->tasklet_id][right_index] = temp0;
+          }
+        }
+      }
+
+      mram_write(&MCU_buffer_cache[d->tasklet_id][0], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE1);
+      mram_write(&MCU_buffer_cache[d->tasklet_id][192], &MCU_buffer[0][target_mcu_index], MCU_READ_WRITE_SIZE1);
+    }
+  }
+}
+
+MUTEX_INIT(sum_rgb_lock);
+
+void find_sum_rgb(JpegDecompressor *d) {
+  int row = jpegInfoDpu.rows_per_tasklet * d->tasklet_id;
+  int end_row = jpegInfoDpu.rows_per_tasklet * (d->tasklet_id + 1);
+  if (d->tasklet_id == NR_TASKLETS - 1) {
+    end_row = jpegInfo.mcu_height;
+  }
+
+  uint32_t sum_rgb[3] = {0, 0, 0};
+
+  for (; row < end_row; row++) {
+    for (int col = 0; col < jpegInfo.mcu_width_real; col++) {
+      int mcu_index = ((row * jpegInfo.mcu_width_real + col) * 3) << 6;
+      mram_read(&MCU_buffer[0][mcu_index], &MCU_buffer_cache[d->tasklet_id][0], MCU_READ_WRITE_SIZE1);
+      for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
+        for (int i = 0; i < 64; i++) {
+          sum_rgb[color_index] += MCU_buffer_cache[d->tasklet_id][(color_index << 6) + i];
+        }
+      }
+    }
+  }
+
+  mutex_lock(sum_rgb_lock);
+  for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
+    jpegInfoDpu.sum_rgb[color_index] += sum_rgb[color_index];
+  }
+  mutex_unlock(sum_rgb_lock);
 }

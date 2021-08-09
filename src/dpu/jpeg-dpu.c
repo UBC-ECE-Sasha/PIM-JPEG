@@ -15,6 +15,9 @@ JpegInfoDpu jpegInfoDpu;
 BARRIER_INIT(init_barrier, NR_TASKLETS);
 BARRIER_INIT(idct_barrier, NR_TASKLETS);
 BARRIER_INIT(crop_barrier, NR_TASKLETS);
+BARRIER_INIT(prep0_barrier, NR_TASKLETS);
+BARRIER_INIT(prep1_barrier, NR_TASKLETS);
+BARRIER_INIT(prep2_barrier, NR_TASKLETS);
 
 #define DEBUG 0
 
@@ -134,6 +137,10 @@ static void init_jpeg_info() {
       jpegInfoDpu.dc_offset[i][2] = 0;
     }
   }
+
+  for (int i = 0; i < 3; i++) {
+    jpegInfoDpu.sum_rgb[i] = 0;
+  }
 }
 
 int main() {
@@ -215,7 +222,20 @@ int main() {
     output.image_height = jpegInfo.image_height;
     output.mcu_width_real = jpegInfo.mcu_width_real;
   }
+
+  barrier_wait(&prep0_barrier);
+
   // horizontal_flip(&decompressor);
+
+  barrier_wait(&prep1_barrier);
+
+  find_sum_rgb(&decompressor);
+
+  barrier_wait(&prep2_barrier);
+
+  for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
+    output.sum_rgb[color_index] = jpegInfoDpu.sum_rgb[color_index];
+  }
 
   return 0;
 }

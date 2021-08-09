@@ -73,6 +73,7 @@ typedef struct dpu_output_t {
   uint16_t image_height;
   uint32_t padding;
   uint32_t mcu_width_real;
+  uint32_t sum_rgb[3];
 } dpu_output_t;
 
 #endif /* _JPEG_HOST__H */

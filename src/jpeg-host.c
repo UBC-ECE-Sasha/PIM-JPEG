@@ -296,6 +296,9 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
       write_bmp_dpu(dpu_inputs[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
                     dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
+
+      dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
+      printf("Sum: %d %d %d\n", this_dpu_output.sum_rgb[0], this_dpu_output.sum_rgb[1], this_dpu_output.sum_rgb[2]);
     }
 
     DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
