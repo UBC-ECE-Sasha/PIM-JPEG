@@ -30,7 +30,7 @@
 
 #define TIME_NOW(_t) (clock_gettime(CLOCK_MONOTONIC, (_t)))
 
-const char options[] = "cdm:r:s:M";
+const char options[] = "cdm:r:s:Mw:f";
 static uint32_t rank_count, dpu_count;
 static uint32_t dpus_per_rank;
 static char **input_files = NULL;
@@ -54,9 +54,13 @@ static char *to_bin(uint64_t i, uint8_t length) {
 }
 #endif // DEBUG
 
-void scale_rank(struct dpu_set_t dpu_rank, dpu_input_t *dpu_inputs, uint32_t dpus_to_use) {
+void scale_rank(struct dpu_set_t dpu_rank, dpu_settings_t *dpu_settings, uint32_t dpus_to_use) {
   struct dpu_set_t dpu;
   uint32_t dpu_id = 0; // the id of the DPU inside the rank (0-63)
+  dpu_inputs_t dpu_inputs;
+  dpu_inputs.file_length = dpu_settings->file_length;
+  dpu_inputs.scale_width = dpu_settings->scale_width;
+  dpu_inputs.horizontal_flip = dpu_settings->horizontal_flip;
 
   DPU_FOREACH(dpu_rank, dpu, dpu_id) {
     printf("\tDPU ID %d\n", dpu_id);
@@ -64,10 +68,11 @@ void scale_rank(struct dpu_set_t dpu_rank, dpu_input_t *dpu_inputs, uint32_t dpu
       break;
     }
 
-    DPU_ASSERT(dpu_copy_to(dpu, "file_length", 0, &dpu_inputs[dpu_id].file_length, sizeof(uint64_t)));
+    DPU_ASSERT(dpu_copy_to(dpu, "input", 0, &dpu_inputs, sizeof(dpu_inputs_t)));
 
 #ifndef BULK_TRANSFER
-    DPU_ASSERT(dpu_copy_to(dpu, "file_buffer", 0, dpu_inputs[dpu_id].buffer, ALIGN(dpu_inputs[dpu_id].file_length, 8)));
+    DPU_ASSERT(
+        dpu_copy_to(dpu, "file_buffer", 0, dpu_settings[dpu_id].buffer, ALIGN(dpu_settings[dpu_id].file_length, 8)));
 #endif
   }
 
@@ -79,8 +84,8 @@ void scale_rank(struct dpu_set_t dpu_rank, dpu_input_t *dpu_inputs, uint32_t dpu
       break;
     }
 
-    DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) dpu_inputs[dpu_id].buffer));
-    int file_length = dpu_inputs[dpu_id].file_length;
+    DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) dpu_settings[dpu_id].buffer));
+    int file_length = dpu_settings[dpu_id].file_length;
     if (file_length > longest_length) {
       longest_length = file_length;
     }
@@ -195,7 +200,6 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   int status;
   uint8_t rank_id;
   uint64_t rank_status = 0; // bitmap indicating if the rank is busy or free
-  // uint32_t submitted;
 
 #ifdef STATISTICS
   // struct timespec start_load, stop_load;
@@ -238,10 +242,10 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   sprintf(dummy_buffer, "DUMMY DUMMY DUMMY");
 
   uint32_t remaining_file_count = opts->input_file_count;
-  dpu_input_t *dpu_inputs = calloc(dpus_per_rank, sizeof(dpu_input_t));
+  dpu_settings_t *dpu_settings = calloc(dpus_per_rank, sizeof(dpu_settings_t));
   uint32_t dpu_id;
   for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
-    dpu_inputs[dpu_id].buffer = malloc(MAX_INPUT_LENGTH);
+    dpu_settings[dpu_id].buffer = malloc(MAX_INPUT_LENGTH);
   }
 
   dpu_output_t *dpu_outputs = calloc(dpus_per_rank, sizeof(dpu_output_t));
@@ -267,11 +271,13 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
         printf("Skipping file %s (%lu > %u)\n", filename, file_length, MAX_INPUT_LENGTH);
         continue;
       }
-      dpu_inputs[dpu_id].file_length = file_length;
-      dpu_inputs[dpu_id].filename = filename;
+      dpu_settings[dpu_id].file_length = file_length;
+      dpu_settings[dpu_id].filename = filename;
+      dpu_settings[dpu_id].scale_width = opts->scale_width;
+      dpu_settings[dpu_id].horizontal_flip = opts->horizontal_flip;
 
       // read the file into the descriptor
-      if (read_input_host(filename, file_length, dpu_inputs[dpu_id].buffer) < 0) {
+      if (read_input_host(filename, file_length, dpu_settings[dpu_id].buffer) < 0) {
         printf("Skipping invalid file %s\n", input_files[file_index]);
         break;
       }
@@ -282,7 +288,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
       printf("Rank ID: %d\n", rank_id);
       if (!(rank_status & (1UL << rank_id))) {
         rank_status |= (1UL << rank_id);
-        scale_rank(dpu_rank, dpu_inputs, dpus_to_use);
+        scale_rank(dpu_rank, dpu_settings, dpus_to_use);
       }
     }
 
@@ -294,11 +300,10 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     }
 
     for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
-      write_bmp_dpu(dpu_inputs[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
+      write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
                     dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
 
       dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
-      printf("Sum: %d %d %d\n", this_dpu_output.sum_rgb[0], this_dpu_output.sum_rgb[1], this_dpu_output.sum_rgb[2]);
     }
 
     DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
@@ -314,9 +319,9 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   free(MCU_buffer);
 
   for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
-    free(dpu_inputs[dpu_id].buffer);
+    free(dpu_settings[dpu_id].buffer);
   }
-  free(dpu_inputs);
+  free(dpu_settings);
   dpu_free(dpus);
 
   return status;
@@ -401,6 +406,9 @@ int main(int argc, char **argv) {
   memset(&opts, 0, sizeof(struct jpeg_options));
   opts.max_files = -1; // no effective maximum by default
   opts.max_ranks = -1; // no effective maximum by default
+  opts.scale_width = 256;
+  opts.scale_height = 256;
+  opts.horizontal_flip = 0; // no horizontal flip by default
 
   while ((opt = getopt(argc, argv, options)) != -1) {
     switch (opt) {
@@ -423,6 +431,14 @@ int main(int argc, char **argv) {
       case 'M':
         opts.flags |= (1 << OPTION_FLAG_MULTIPLE_FILES);
         dbg_printf("Allocating multiple files per DPU\n");
+        break;
+
+      case 'w':
+        opts.scale_width = strtoul(optarg, NULL, 0);
+        break;
+
+      case 'f':
+        opts.horizontal_flip = 1;
         break;
 
       case 'C':

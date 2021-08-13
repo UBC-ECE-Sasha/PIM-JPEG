@@ -27,6 +27,10 @@ struct jpeg_options {
   uint32_t max_files; /* stop processing after this many files */
   uint32_t max_ranks; /* use this number of ranks, even if we have more */
   uint32_t input_file_count;
+
+  uint32_t scale_width;
+  uint32_t scale_height;
+  uint32_t horizontal_flip;
 } __attribute__((aligned(8)));
 
 typedef struct file_stats {
@@ -62,11 +66,19 @@ typedef struct host_results {
   uint64_t total_instructions;
 } host_results;
 
-typedef struct dpu_input_t {
+typedef struct dpu_settings_t {
   char *buffer;
   uint64_t file_length;
   char *filename;
-} dpu_input_t;
+  uint32_t scale_width;
+  uint32_t horizontal_flip;
+} dpu_settings_t;
+
+typedef struct dpu_inputs_t {
+  uint64_t file_length;
+  uint32_t scale_width;
+  uint32_t horizontal_flip;
+} dpu_inputs_t;
 
 typedef struct dpu_output_t {
   uint16_t image_width;
