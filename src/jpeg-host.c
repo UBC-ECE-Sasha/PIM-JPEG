@@ -23,6 +23,8 @@
 #define TEMP_LENGTH 256
 #define ALL_RANKS (rank_count == 64 ? 0xFFFFFFFFFFFFFFFF : (1UL << rank_count) - 1)
 
+#define FAULT_LOOP_FIX
+
 // to extract components from dpu_id_t
 #define DPU_ID_RANK(_x) ((_x >> 16) & 0xFF)
 #define DPU_ID_SLICE(_x) ((_x >> 8) & 0xFF)
@@ -141,6 +143,7 @@ int check_for_completed_rank(struct dpu_set_t dpus, uint64_t *rank_status, dpu_o
     if (*rank_status & ((uint64_t) 1 << rank_id)) {
       // check to see if anything has completed
       dpu_status(dpu_rank, &done, &fault);
+#ifndef FAULT_LOOP_FIX
       if (fault) {
         bool dpu_done, dpu_fault;
         printf("rank %u fault - abort!\n", rank_id);
@@ -156,6 +159,7 @@ int check_for_completed_rank(struct dpu_set_t dpus, uint64_t *rank_status, dpu_o
 
         return -2;
       }
+#endif
 
       if (done) {
         *rank_status &= ~((uint64_t) 1 << rank_id);
