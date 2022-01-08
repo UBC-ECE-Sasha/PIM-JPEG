@@ -44,7 +44,7 @@ def main():
 
     resultsFile = open(args.outputResults, 'w')
     results = csv.writer(resultsFile)
-    csvHeader = ['image']
+    csvHeader = ['image', 'corrupted']
     if not args.PSNRonly:
         csvHeader += ['SSIM-R', 'SSIM-G', 'SSIM-B', 'SSIM']
     csvHeader += ['PSNR-R', 'PSNR-G', 'PSNR-B', 'PSNR',
@@ -127,17 +127,18 @@ def main():
                     logging.debug("Image mode: %s", outImg.mode)
                     continue
 
-                row = [refName]
-                if not args.PSNRonly:
-                    row += ssim
-                row += psnr + [refPath, outPath]
-                results.writerow(row)
-
                 corrupted = psnr[3] < args.PSNRthreshold
                 if not args.PSNRonly:
                     corrupted = corrupted or ssim[3] < args.SSIMthreshold
                 if corrupted:
                     logging.info("Output image %s may be corrupted.", name)
+
+                row = [refName, corrupted]
+                if not args.PSNRonly:
+                    row += ssim
+                row += psnr + [refPath, outPath]
+                results.writerow(row)
+
             else:
                 logging.warning("Couldn't find reference image for: %s", outPath)
     
