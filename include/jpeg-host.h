@@ -31,6 +31,8 @@ struct jpeg_options {
   uint32_t scale_width;
   uint32_t scale_height;
   uint32_t horizontal_flip;
+  uint32_t num_dpus;
+  uint32_t num_ranks;
 } __attribute__((aligned(8)));
 
 typedef struct file_stats {

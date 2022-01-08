@@ -17,7 +17,7 @@ NR_DPUS = 1
 NR_TASKLETS = 8
 
 # Bulk (dpu_prepare_xfer) is default
-BULK = 0
+BULK = 1
 
 # Statistics are on by default
 STATS = 1

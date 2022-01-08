@@ -30,7 +30,7 @@
 
 #define TIME_NOW(_t) (clock_gettime(CLOCK_MONOTONIC, (_t)))
 
-const char options[] = "cdm:r:s:Mw:f";
+const char options[] = "cdmn:k:r:s:Mw:f";
 static uint32_t rank_count, dpu_count;
 static uint32_t dpus_per_rank;
 static char **input_files = NULL;
@@ -210,14 +210,15 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
 #endif // BULK_TRANSFER
 
   // allocate all of the DPUS up-front, then check to see how many we got
-  // status = dpu_alloc(DPU_ALLOCATE_ALL, NULL, &dpus);
-  status = dpu_alloc(1, NULL, &dpus);
+   //status = dpu_alloc(DPU_ALLOCATE_ALL, NULL, &dpus);
+  status = dpu_alloc(opts->num_dpus, NULL, &dpus);
   if (status != DPU_OK) {
     fprintf(stderr, "Error %i allocating DPUs\n", status);
     return -3;
   }
 
-  dpu_get_nr_ranks(dpus, &rank_count);
+  //dpu_get_nr_ranks(dpus, &rank_count);
+  rank_count=opts->num_ranks; //testing to manually set number of ranks to use since the above call seems to choose #ranks differently
   dpu_get_nr_dpus(dpus, &dpu_count);
   dpus_per_rank = dpu_count / rank_count;
   printf("Got %u dpus across %u ranks (%u dpus per rank)\n", dpu_count, rank_count, dpus_per_rank);
@@ -299,12 +300,12 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
       }
     }
 
-    for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
+    /*for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
       write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
                     dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
 
       dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
-    }
+    }*/
 
     DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
       printf("Rank ID: %d\n", rank_id);
@@ -376,6 +377,8 @@ static void usage(const char *exe_name) {
   fprintf(stderr, "Scale a JPEG without decompression\nCan use either the host CPU or UPMEM DPU\n");
   fprintf(stderr, "usage: %s [-d] -s <scale percent> <filenames>\n", exe_name);
   fprintf(stderr, "d: use DPU\n");
+  fprintf(stderr, "n: use n DPUs\n");
+  fprintf(stderr, "k: use k Ranks\n");
   fprintf(stderr, "m: maximum number of files to process\n");
   fprintf(stderr, "r: maximum number of ranks to use\n");
   fprintf(stderr, "t: term to search for\n");
@@ -409,6 +412,9 @@ int main(int argc, char **argv) {
   opts.scale_width = 256;
   opts.scale_height = 256;
   opts.horizontal_flip = 0; // no horizontal flip by default
+  opts.num_dpus = 1;
+  opts.num_ranks = 1;
+
 
   while ((opt = getopt(argc, argv, options)) != -1) {
     switch (opt) {
@@ -440,6 +446,15 @@ int main(int argc, char **argv) {
       case 'f':
         opts.horizontal_flip = 1;
         break;
+      
+      case 'n':
+        opts.num_dpus = strtoul(optarg, NULL, 0);
+        break;
+
+      case 'k':
+        opts.num_ranks = strtoul(optarg, NULL, 0);
+        break;
+
 
       case 'C':
       case 'D':
