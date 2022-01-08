@@ -1,5 +1,7 @@
 scikit-image
-# sudo apt-get install libjpeg-dev zlib1g-dev
+
+# sudo apt install libjpeg-dev zlib1g-dev
 Pillow
+
 # sudo apt install libblas3 liblapack3 liblapack-dev gfortran
 numpy
