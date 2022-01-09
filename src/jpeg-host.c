@@ -141,7 +141,7 @@ int check_for_completed_rank(struct dpu_set_t dpus, uint64_t *rank_status, dpu_o
     if (*rank_status & ((uint64_t) 1 << rank_id)) {
       // check to see if anything has completed
       dpu_status(dpu_rank, &done, &fault);
-      if (fault) {
+      /*if (fault) {
         bool dpu_done, dpu_fault;
         printf("rank %u fault - abort!\n", rank_id);
 
@@ -155,11 +155,11 @@ int check_for_completed_rank(struct dpu_set_t dpus, uint64_t *rank_status, dpu_o
         }
 
         return -2;
-      }
+      }*/
 
       if (done) {
         *rank_status &= ~((uint64_t) 1 << rank_id);
-        printf("Reading results from rank %u status %lu\n", rank_id, *rank_status);
+        // printf("Reading results from rank %u status %lu\n", rank_id, *rank_status);
         read_results_dpu_rank(dpu_rank, dpu_outputs, MCU_buffer);
       }
     }
@@ -291,39 +291,39 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
         break;
       }
     }
-
-    uint32_t dpus_to_use = dpu_id;
-    DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
-      printf("Rank ID: %d\n", rank_id);
-      if (!(rank_status & (1UL << rank_id))) {
-        rank_status |= (1UL << rank_id);
-        rank_iterations++;
-        scale_rank(dpu_rank, dpu_settings, dpus_to_use);
-      }
-    }
-
-    while (rank_status) {
-      int ret = check_for_completed_rank(dpus, &rank_status, dpu_outputs, MCU_buffer);
-      if (ret == -2) {
-        status = PROG_FAULT;
-      }
-    }
-
-    /*for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
-      write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
-                    dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
-
-      dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
-    }*/
-
-    /*DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
-      printf("Rank ID: %d\n", rank_id);
-      DPU_FOREACH(dpu_rank, dpu, dpu_id) {
-        printf("DPU ID: %d\n", dpu_id);
-        DPU_ASSERT(dpu_log_read(dpu, stdout));
-      }
-    }*/
   }
+  uint32_t dpus_to_use = dpu_id;
+  printf("dpus to use = %d\n", dpus_to_use);
+  DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
+    printf("Rank ID: %d\n", rank_id);
+    if (!(rank_status & (1UL << rank_id))) {
+      rank_status |= (1UL << rank_id);
+      rank_iterations++;
+      scale_rank(dpu_rank, dpu_settings, dpus_to_use);
+    }
+  }
+
+  while (rank_status) {
+    int ret = check_for_completed_rank(dpus, &rank_status, dpu_outputs, MCU_buffer);
+    if (ret == -2) {
+      status = PROG_FAULT;
+    }
+  }
+
+  for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
+    write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
+                  dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
+
+    dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
+  }
+
+  /*DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
+    printf("Rank ID: %d\n", rank_id);
+    DPU_FOREACH(dpu_rank, dpu, dpu_id) {
+      printf("DPU ID: %d\n", dpu_id);
+      DPU_ASSERT(dpu_log_read(dpu, stdout));
+    }
+  }*/
 
   free(dpu_outputs);
   free(MCU_buffer);
