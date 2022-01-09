@@ -292,13 +292,11 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
       }
     }
   }
-  uint32_t dpus_to_use = dpu_id;
-  printf("dpus to use = %d\n", dpus_to_use);
+  uint32_t dpus_to_use = dpus_per_rank;
   DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
     printf("Rank ID: %d\n", rank_id);
     if (!(rank_status & (1UL << rank_id))) {
       rank_status |= (1UL << rank_id);
-      rank_iterations++;
       scale_rank(dpu_rank, dpu_settings, dpus_to_use);
     }
   }
@@ -310,12 +308,12 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     }
   }
 
-  for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
+  /*for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
     write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
                   dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
 
     dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
-  }
+  }*/
 
   /*DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
     printf("Rank ID: %d\n", rank_id);
@@ -333,7 +331,6 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   }
   free(dpu_settings);
   dpu_free(dpus);
-  printf("%d\n", rank_iterations);
   return status;
 }
 
