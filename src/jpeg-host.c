@@ -63,7 +63,7 @@ void scale_rank(struct dpu_set_t dpu_rank, dpu_settings_t *dpu_settings, uint32_
   dpu_inputs.horizontal_flip = dpu_settings->horizontal_flip;
 
   DPU_FOREACH(dpu_rank, dpu, dpu_id) {
-    printf("\tDPU ID %d\n", dpu_id);
+    // printf("\tDPU ID %d\n", dpu_id);
     if (dpu_id >= dpus_to_use) {
       break;
     }
@@ -201,6 +201,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   uint8_t rank_id;
   uint64_t rank_status = 0; // bitmap indicating if the rank is busy or free
 
+  int rank_iterations = 0;
 #ifdef STATISTICS
   // struct timespec start_load, stop_load;
 #endif // STATISTICS
@@ -210,15 +211,22 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
 #endif // BULK_TRANSFER
 
   // allocate all of the DPUS up-front, then check to see how many we got
-   //status = dpu_alloc(DPU_ALLOCATE_ALL, NULL, &dpus);
+  // status = dpu_alloc(DPU_ALLOCATE_ALL, NULL, &dpus);
   status = dpu_alloc(opts->num_dpus, NULL, &dpus);
   if (status != DPU_OK) {
     fprintf(stderr, "Error %i allocating DPUs\n", status);
     return -3;
   }
+  status = dpu_alloc_ranks(opts->num_ranks, NULL, &dpu_rank);
+  if (status != DPU_OK) {
+    fprintf(stderr, "Error %i allocating Ranks\n", status);
+    return -3;
+  }
 
-  //dpu_get_nr_ranks(dpus, &rank_count);
-  rank_count=opts->num_ranks; //testing to manually set number of ranks to use since the above call seems to choose #ranks differently
+  dpu_get_nr_ranks(dpu_rank, &rank_count);
+  // rank_count=opts->num_ranks; //testing to manually set number of ranks to use since the above call seems to choose
+  // #ranks differently
+  // dpu_get_nr_dpus(dpus, &dpu_count);
   dpu_get_nr_dpus(dpus, &dpu_count);
   dpus_per_rank = dpu_count / rank_count;
   printf("Got %u dpus across %u ranks (%u dpus per rank)\n", dpu_count, rank_count, dpus_per_rank);
@@ -289,6 +297,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
       printf("Rank ID: %d\n", rank_id);
       if (!(rank_status & (1UL << rank_id))) {
         rank_status |= (1UL << rank_id);
+        rank_iterations++;
         scale_rank(dpu_rank, dpu_settings, dpus_to_use);
       }
     }
@@ -307,13 +316,13 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
       dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
     }*/
 
-    DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
+    /*DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
       printf("Rank ID: %d\n", rank_id);
       DPU_FOREACH(dpu_rank, dpu, dpu_id) {
         printf("DPU ID: %d\n", dpu_id);
         DPU_ASSERT(dpu_log_read(dpu, stdout));
       }
-    }
+    }*/
   }
 
   free(dpu_outputs);
@@ -324,7 +333,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   }
   free(dpu_settings);
   dpu_free(dpus);
-
+  printf("%d\n", rank_iterations);
   return status;
 }
 
@@ -415,7 +424,6 @@ int main(int argc, char **argv) {
   opts.num_dpus = 1;
   opts.num_ranks = 1;
 
-
   while ((opt = getopt(argc, argv, options)) != -1) {
     switch (opt) {
       case 'd':
@@ -446,7 +454,7 @@ int main(int argc, char **argv) {
       case 'f':
         opts.horizontal_flip = 1;
         break;
-      
+
       case 'n':
         opts.num_dpus = strtoul(optarg, NULL, 0);
         break;
@@ -454,7 +462,6 @@ int main(int argc, char **argv) {
       case 'k':
         opts.num_ranks = strtoul(optarg, NULL, 0);
         break;
-
 
       case 'C':
       case 'D':
