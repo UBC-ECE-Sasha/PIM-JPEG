@@ -54,72 +54,57 @@ static char *to_bin(uint64_t i, uint8_t length) {
 }
 #endif // DEBUG
 
-void scale_rank(struct dpu_set_t dpu_rank, dpu_settings_t *dpu_settings, uint32_t dpus_to_use) {
-  struct dpu_set_t dpu;
-  uint32_t dpu_id = 0; // the id of the DPU inside the rank (0-63)
+void scale_rank(struct dpu_set_t dpus, struct dpu_set_t dpu, uint32_t dpu_id, dpu_settings_t *dpu_settings,
+                uint32_t dpus_to_use) {
   dpu_inputs_t dpu_inputs;
   dpu_inputs.file_length = dpu_settings->file_length;
   dpu_inputs.scale_width = dpu_settings->scale_width;
   dpu_inputs.horizontal_flip = dpu_settings->horizontal_flip;
 
-  DPU_FOREACH(dpu_rank, dpu, dpu_id) {
-    // printf("\tDPU ID %d\n", dpu_id);
-    if (dpu_id >= dpus_to_use) {
-      break;
-    }
-
-    DPU_ASSERT(dpu_copy_to(dpu, "input", 0, &dpu_inputs, sizeof(dpu_inputs_t)));
+  DPU_ASSERT(dpu_copy_to(dpu, "input", 0, &dpu_inputs, sizeof(dpu_inputs_t)));
 
 #ifndef BULK_TRANSFER
-    DPU_ASSERT(
-        dpu_copy_to(dpu, "file_buffer", 0, dpu_settings[dpu_id].buffer, ALIGN(dpu_settings[dpu_id].file_length, 8)));
+  DPU_ASSERT(
+      dpu_copy_to(dpu, "file_buffer", 0, dpu_settings[dpu_id].buffer, ALIGN(dpu_settings[dpu_id].file_length, 8)));
 #endif
-  }
 
 #ifdef BULK_TRANSFER
   int longest_length = 0;
 
-  DPU_FOREACH(dpu_rank, dpu, dpu_id) {
-    if (dpu_id >= dpus_to_use) {
-      break;
-    }
-
-    DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) dpu_settings[dpu_id].buffer));
-    int file_length = dpu_settings[dpu_id].file_length;
-    if (file_length > longest_length) {
-      longest_length = file_length;
-    }
+  DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) dpu_settings[dpu_id].buffer));
+  int file_length = dpu_settings[dpu_id].file_length;
+  if (file_length > longest_length) {
+    longest_length = file_length;
   }
-  DPU_ASSERT(dpu_push_xfer(dpu_rank, DPU_XFER_TO_DPU, "file_buffer", 0, ALIGN(longest_length, 8), DPU_XFER_DEFAULT));
+  DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_TO_DPU, "file_buffer", 0, ALIGN(longest_length, 8), DPU_XFER_DEFAULT));
 #endif
-
-  DPU_ASSERT(dpu_launch(dpu_rank, DPU_ASYNCHRONOUS));
 }
 
-int read_results_dpu_rank(struct dpu_set_t dpu_rank, dpu_output_t *dpu_outputs, short **MCU_buffer) {
+int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, short **MCU_buffer) {
+
   struct dpu_set_t dpu;
   uint8_t dpu_id;
 
 #ifdef BULK_TRANSFER
-  DPU_FOREACH(dpu_rank, dpu, dpu_id) {
+  DPU_FOREACH(dpus, dpu, dpu_id) {
     DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) &dpu_outputs[dpu_id]));
+    DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "output", 0, sizeof(dpu_output_t), DPU_XFER_DEFAULT));
   }
-  DPU_ASSERT(dpu_push_xfer(dpu_rank, DPU_XFER_FROM_DPU, "output", 0, sizeof(dpu_output_t), DPU_XFER_DEFAULT));
 
   int largest_pixel_count = 0;
-  DPU_FOREACH(dpu_rank, dpu, dpu_id) {
+  DPU_FOREACH(dpus, dpu, dpu_id) {
     DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) MCU_buffer[dpu_id]));
     int pixel_count = ALIGN(dpu_outputs[dpu_id].image_height, 8) * ALIGN(dpu_outputs[dpu_id].image_width, 8);
     if (pixel_count > largest_pixel_count) {
       largest_pixel_count = pixel_count;
     }
+    DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "MCU_buffer", 0, sizeof(short) * largest_pixel_count * 3,
+                             DPU_XFER_DEFAULT));
   }
-  DPU_ASSERT(dpu_push_xfer(dpu_rank, DPU_XFER_FROM_DPU, "MCU_buffer", 0, sizeof(short) * largest_pixel_count * 3,
-                           DPU_XFER_DEFAULT));
 #endif // BULK_TRANSFER
 
 #ifndef BULK_TRANSFER
-  DPU_FOREACH(dpu_rank, dpu, dpu_id) {
+  DPU_FOREACH(dpus, dpu, dpu_id) {
     DPU_ASSERT(dpu_copy_from(dpu, "output", 0, &dpu_outputs[dpu_id], sizeof(dpu_output_t)));
     DPU_ASSERT(dpu_copy_from(dpu, "MCU_buffer", 0, MCU_buffer[dpu_id],
                              sizeof(short) * ALIGN(dpu_outputs[dpu_id].image_height, 8) *
@@ -157,11 +142,11 @@ int check_for_completed_rank(struct dpu_set_t dpus, uint64_t *rank_status, dpu_o
         return -2;
       }*/
 
-      if (done) {
+      /*if (done) {
         *rank_status &= ~((uint64_t) 1 << rank_id);
         // printf("Reading results from rank %u status %lu\n", rank_id, *rank_status);
         read_results_dpu_rank(dpu_rank, dpu_outputs, MCU_buffer);
-      }
+      }*/
     }
     rank_id++;
   }
@@ -196,12 +181,9 @@ static int read_input_host(char *in_file, uint64_t length, char *buffer) {
 
 static int dpu_main(struct jpeg_options *opts, host_results *results) {
   char dpu_program_name[32];
-  struct dpu_set_t dpus, dpu_rank, dpu;
+  struct dpu_set_t dpus, dpu;
   int status;
-  uint8_t rank_id;
-  uint64_t rank_status = 0; // bitmap indicating if the rank is busy or free
 
-  int rank_iterations = 0;
 #ifdef STATISTICS
   // struct timespec start_load, stop_load;
 #endif // STATISTICS
@@ -217,13 +199,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     fprintf(stderr, "Error %i allocating DPUs\n", status);
     return -3;
   }
-  status = dpu_alloc_ranks(opts->num_ranks, NULL, &dpu_rank);
-  if (status != DPU_OK) {
-    fprintf(stderr, "Error %i allocating Ranks\n", status);
-    return -3;
-  }
-
-  dpu_get_nr_ranks(dpu_rank, &rank_count);
+  dpu_get_nr_ranks(dpus, &rank_count);
   // rank_count=opts->num_ranks; //testing to manually set number of ranks to use since the above call seems to choose
   // #ranks differently
   // dpu_get_nr_dpus(dpus, &dpu_count);
@@ -235,7 +211,6 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   if (rank_count > opts->max_ranks) {
     rank_count = opts->max_ranks;
   }
-
   snprintf(dpu_program_name, 31, "%s-%u", DPU_PROGRAM, NR_TASKLETS);
   DPU_ASSERT(dpu_load(dpus, dpu_program_name, NULL));
 
@@ -250,83 +225,67 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   // prepare the dummy buffer
   sprintf(dummy_buffer, "DUMMY DUMMY DUMMY");
 
-  uint32_t remaining_file_count = opts->input_file_count;
-  dpu_settings_t *dpu_settings = calloc(dpus_per_rank, sizeof(dpu_settings_t));
+  dpu_settings_t *dpu_settings = calloc(dpu_count, sizeof(dpu_settings_t));
   uint32_t dpu_id;
-  for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
+  for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
     dpu_settings[dpu_id].buffer = malloc(MAX_INPUT_LENGTH);
   }
 
-  dpu_output_t *dpu_outputs = calloc(dpus_per_rank, sizeof(dpu_output_t));
-  short **MCU_buffer = malloc(sizeof(short *) * dpus_per_rank);
-  for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
+  dpu_output_t *dpu_outputs = calloc(dpu_count, sizeof(dpu_output_t));
+  short **MCU_buffer = malloc(sizeof(short *) * dpu_count);
+  for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
     MCU_buffer[dpu_id] = malloc(sizeof(short) * 87380 * 3 * 64);
   }
 
-  for (uint32_t i = 0; i < remaining_file_count; i += dpus_per_rank) {
-    for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
-      int file_index = i + dpu_id;
-      if (file_index >= remaining_file_count) {
-        break;
-      }
-
-      struct stat st;
-      char *filename = input_files[file_index];
-
-      // read the length of the next input file
-      stat(filename, &st);
-      uint64_t file_length = st.st_size;
-      if (file_length > MAX_INPUT_LENGTH) {
-        printf("Skipping file %s (%lu > %u)\n", filename, file_length, MAX_INPUT_LENGTH);
-        continue;
-      }
-      dpu_settings[dpu_id].file_length = file_length;
-      dpu_settings[dpu_id].filename = filename;
-      dpu_settings[dpu_id].scale_width = opts->scale_width;
-      dpu_settings[dpu_id].horizontal_flip = opts->horizontal_flip;
-
-      // read the file into the descriptor
-      if (read_input_host(filename, file_length, dpu_settings[dpu_id].buffer) < 0) {
-        printf("Skipping invalid file %s\n", input_files[file_index]);
-        break;
-      }
+  // Let's make the assumption that number of files = number of DPUS to use
+  for (uint32_t dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
+    int file_index = dpu_id;
+    if (file_index >= dpu_count) {
+      break;
     }
-  }
-  uint32_t dpus_to_use = dpus_per_rank;
-  DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
-    printf("Rank ID: %d\n", rank_id);
-    if (!(rank_status & (1UL << rank_id))) {
-      rank_status |= (1UL << rank_id);
-      scale_rank(dpu_rank, dpu_settings, dpus_to_use);
+
+    struct stat st;
+    char *filename = input_files[file_index];
+
+    // read the length of the next input file
+    stat(filename, &st);
+    uint64_t file_length = st.st_size;
+    if (file_length > MAX_INPUT_LENGTH) {
+      printf("Skipping file %s (%lu > %u)\n", filename, file_length, MAX_INPUT_LENGTH);
+      continue;
+    }
+    dpu_settings[dpu_id].file_length = file_length;
+    dpu_settings[dpu_id].filename = filename;
+    dpu_settings[dpu_id].scale_width = opts->scale_width;
+    dpu_settings[dpu_id].horizontal_flip = opts->horizontal_flip;
+
+    // read the file into the descriptor
+    if (read_input_host(filename, file_length, dpu_settings[dpu_id].buffer) < 0) {
+      printf("Skipping invalid file %s\n", input_files[file_index]);
+      break;
     }
   }
 
-  while (rank_status) {
-    int ret = check_for_completed_rank(dpus, &rank_status, dpu_outputs, MCU_buffer);
-    if (ret == -2) {
-      status = PROG_FAULT;
-    }
+  uint32_t dpus_to_use = dpu_count;
+  dpu_id = 0;
+  DPU_FOREACH(dpus, dpu, dpu_id) {
+    scale_rank(dpus, dpu, dpu_id, dpu_settings, dpus_to_use);
   }
+  DPU_ASSERT(dpu_launch(dpus, DPU_SYNCHRONOUS));
 
-  /*for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
+  read_results_dpu_rank(dpus, dpu_outputs, MCU_buffer);
+
+  for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
     write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
                   dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
 
     dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
-  }*/
-
-  /*DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
-    printf("Rank ID: %d\n", rank_id);
-    DPU_FOREACH(dpu_rank, dpu, dpu_id) {
-      printf("DPU ID: %d\n", dpu_id);
-      DPU_ASSERT(dpu_log_read(dpu, stdout));
-    }
-  }*/
+  }
 
   free(dpu_outputs);
   free(MCU_buffer);
 
-  for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
+  for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
     free(dpu_settings[dpu_id].buffer);
   }
   free(dpu_settings);
