@@ -1184,7 +1184,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
   }
 
   // Now write the decoded data out as BMP
-  write_bmp_cpu(filename, jpegInfo.image_width, jpegInfo.image_height, jpegInfo.padding, jpegInfo.mcu_width_real, mcus);
+  //write_bmp_cpu(filename, jpegInfo.image_width, jpegInfo.image_height, jpegInfo.padding, jpegInfo.mcu_width_real, mcus);
   free(mcus);
 
   return;
