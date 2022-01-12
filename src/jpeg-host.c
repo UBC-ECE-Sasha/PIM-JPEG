@@ -60,30 +60,34 @@ void scale_rank(struct dpu_set_t dpus, struct dpu_set_t dpu, uint32_t dpu_id, dp
   dpu_inputs.file_length = dpu_settings->file_length;
   dpu_inputs.scale_width = dpu_settings->scale_width;
   dpu_inputs.horizontal_flip = dpu_settings->horizontal_flip;
+  int longest_length = 0;
 
-  DPU_ASSERT(dpu_copy_to(dpu, "input", 0, &dpu_inputs, sizeof(dpu_inputs_t)));
+  DPU_FOREACH(dpus, dpu, dpu_id) {
+    DPU_ASSERT(dpu_copy_to(dpu, "input", 0, &dpu_inputs, sizeof(dpu_inputs_t)));
 
 #ifndef BULK_TRANSFER
-  DPU_ASSERT(
-      dpu_copy_to(dpu, "file_buffer", 0, dpu_settings[dpu_id].buffer, ALIGN(dpu_settings[dpu_id].file_length, 8)));
+    DPU_ASSERT(
+        dpu_copy_to(dpu, "file_buffer", 0, dpu_settings[dpu_id].buffer, ALIGN(dpu_settings[dpu_id].file_length, 8)));
 #endif
 
 #ifdef BULK_TRANSFER
-  int longest_length = 0;
 
-  DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) dpu_settings[dpu_id].buffer));
-  int file_length = dpu_settings[dpu_id].file_length;
-  if (file_length > longest_length) {
-    longest_length = file_length;
+    DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) dpu_settings[dpu_id].buffer));
+    int file_length = dpu_settings[dpu_id].file_length;
+    if (file_length > longest_length) {
+      longest_length = file_length;
+    }
+#endif
   }
+
+#ifdef BULK_TRANSFER
   DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_TO_DPU, "file_buffer", 0, ALIGN(longest_length, 8), DPU_XFER_DEFAULT));
 #endif
 }
-
 int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, short **MCU_buffer) {
 
   struct dpu_set_t dpu;
-  uint8_t dpu_id;
+  uint32_t dpu_id;
 
 #ifdef BULK_TRANSFER
   DPU_FOREACH(dpus, dpu, dpu_id) {
@@ -98,9 +102,10 @@ int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, shor
     if (pixel_count > largest_pixel_count) {
       largest_pixel_count = pixel_count;
     }
-    DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "MCU_buffer", 0, sizeof(short) * largest_pixel_count * 3,
-                             DPU_XFER_DEFAULT));
   }
+  DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "MCU_buffer", 0, sizeof(short) * largest_pixel_count * 3,
+                           DPU_XFER_DEFAULT));
+
 #endif // BULK_TRANSFER
 
 #ifndef BULK_TRANSFER
@@ -115,43 +120,20 @@ int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, shor
   return 0;
 }
 
-int check_for_completed_rank(struct dpu_set_t dpus, uint64_t *rank_status, dpu_output_t *dpu_outputs,
-                             short **MCU_buffer) {
-  struct dpu_set_t dpu_rank, dpu;
-  uint8_t rank_id = 0;
+int check_for_completed_dpu(struct dpu_set_t dpus) {
+  struct dpu_set_t dpu;
+  uint32_t dpu_id;
+  uint32_t dpus_done = 0;
 
-  DPU_RANK_FOREACH(dpus, dpu_rank) {
+  DPU_FOREACH(dpus, dpu, dpu_id) {
     bool done, fault;
-
-    if (*rank_status & ((uint64_t) 1 << rank_id)) {
-      // check to see if anything has completed
-      dpu_status(dpu_rank, &done, &fault);
-      /*if (fault) {
-        bool dpu_done, dpu_fault;
-        printf("rank %u fault - abort!\n", rank_id);
-
-        // try to find which DPU caused the fault
-        DPU_FOREACH(dpu_rank, dpu) {
-          dpu_status(dpu, &dpu_done, &dpu_fault);
-          if (dpu_fault) {
-            dpu_id_t id = dpu_get_id(dpu.dpu);
-            fprintf(stderr, "[%u:%u:%u] at fault\n", DPU_ID_RANK(id), DPU_ID_SLICE(id), DPU_ID_DPU(id));
-          }
-        }
-
-        return -2;
-      }*/
-
-      /*if (done) {
-        *rank_status &= ~((uint64_t) 1 << rank_id);
-        // printf("Reading results from rank %u status %lu\n", rank_id, *rank_status);
-        read_results_dpu_rank(dpu_rank, dpu_outputs, MCU_buffer);
-      }*/
+    dpu_status(dpu, &done, &fault);
+    if (done) {
+      dpus_done++;
     }
-    rank_id++;
   }
 
-  return 0;
+  return dpus_done;
 }
 
 /**
@@ -181,7 +163,7 @@ static int read_input_host(char *in_file, uint64_t length, char *buffer) {
 
 static int dpu_main(struct jpeg_options *opts, host_results *results) {
   char dpu_program_name[32];
-  struct dpu_set_t dpus, dpu;
+  struct dpu_set_t ranks, dpus, dpu;
   int status;
 
 #ifdef STATISTICS
@@ -199,7 +181,13 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     fprintf(stderr, "Error %i allocating DPUs\n", status);
     return -3;
   }
-  dpu_get_nr_ranks(dpus, &rank_count);
+  status = dpu_alloc_ranks(opts->num_ranks, NULL, &ranks);
+  if (status != DPU_OK) {
+    fprintf(stderr, "Error %i allocating DPU Ranks\n", status);
+    return -3;
+  }
+
+  dpu_get_nr_ranks(ranks, &rank_count);
   // rank_count=opts->num_ranks; //testing to manually set number of ranks to use since the above call seems to choose
   // #ranks differently
   // dpu_get_nr_dpus(dpus, &dpu_count);
@@ -268,19 +256,21 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
 
   uint32_t dpus_to_use = dpu_count;
   dpu_id = 0;
-  DPU_FOREACH(dpus, dpu, dpu_id) {
-    scale_rank(dpus, dpu, dpu_id, dpu_settings, dpus_to_use);
+  scale_rank(dpus, dpu, dpu_id, dpu_settings, dpus_to_use);
+  DPU_ASSERT(dpu_launch(dpus, DPU_ASYNCHRONOUS));
+
+  uint64_t dpu_status = 0;
+  while (check_for_completed_dpu(dpus) != dpu_count) {
   }
-  DPU_ASSERT(dpu_launch(dpus, DPU_SYNCHRONOUS));
 
   read_results_dpu_rank(dpus, dpu_outputs, MCU_buffer);
 
-  for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
+  /*for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
     write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
                   dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
 
     dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
-  }
+  }*/
 
   free(dpu_outputs);
   free(MCU_buffer);
