@@ -166,6 +166,13 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   struct dpu_set_t ranks, dpus, dpu;
   int status;
 
+  double input_setup_time;
+  struct timespec input_setup_start, input_setup_stop;
+  double launch_dpu_time;
+  struct timespec launch_dpu_start, launch_dpu_stop;
+  double read_results_time;
+  struct timespec read_results_start, read_results_stop;
+
 #ifdef STATISTICS
   // struct timespec start_load, stop_load;
 #endif // STATISTICS
@@ -174,6 +181,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   printf("Using bulk transfer\n");
 #endif // BULK_TRANSFER
 
+  clock_gettime(CLOCK_MONOTONIC, &input_setup_start);
   // allocate all of the DPUS up-front, then check to see how many we got
   // status = dpu_alloc(DPU_ALLOCATE_ALL, NULL, &dpus);
   status = dpu_alloc(opts->num_dpus, NULL, &dpus);
@@ -253,7 +261,10 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
       break;
     }
   }
+  clock_gettime(CLOCK_MONOTONIC, &input_setup_stop);
+  input_setup_time = TIME_DIFFERENCE(input_setup_start, input_setup_stop);
 
+  clock_gettime(CLOCK_MONOTONIC, &launch_dpu_start);
   uint32_t dpus_to_use = dpu_count;
   dpu_id = 0;
   scale_rank(dpus, dpu, dpu_id, dpu_settings, dpus_to_use);
@@ -262,8 +273,17 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   uint64_t dpu_status = 0;
   while (check_for_completed_dpu(dpus) != dpu_count) {
   }
+  clock_gettime(CLOCK_MONOTONIC, &launch_dpu_stop);
+  launch_dpu_time = TIME_DIFFERENCE(launch_dpu_start, input_setup_stop);
 
+  clock_gettime(CLOCK_MONOTONIC, &read_results_start);
   read_results_dpu_rank(dpus, dpu_outputs, MCU_buffer);
+  clock_gettime(CLOCK_MONOTONIC, &read_results_stop);
+  read_results_time = TIME_DIFFERENCE(read_results_start, input_setup_stop);
+
+  printf("__________Breakdown___________");
+  printf("input setup time = %.2f\n launch DPU time = %.2f\n read results time = %.2f\n");
+  printf("__________Breakdown___________");
 
   /*for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
     write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
