@@ -59,13 +59,6 @@ typedef struct host_rank_context {
 #endif // STATISTICS
 } host_rank_context;
 
-typedef struct host_results {
-  uint32_t total_line_count;
-  uint32_t total_match_count;
-  uint32_t total_files;
-  uint64_t total_instructions;
-} host_results;
-
 typedef struct dpu_settings_t {
   char *buffer;
   uint64_t file_length;

@@ -194,7 +194,7 @@ static int read_input_host(char *in_file, uint64_t length, char *buffer) {
   return n;
 }
 
-static int dpu_main(struct jpeg_options *opts, host_results *results) {
+static int dpu_main(struct jpeg_options *opts) {
   char dpu_program_name[32];
   struct dpu_set_t dpus, dpu_rank, dpu;
   int status;
@@ -256,7 +256,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
 
   for (uint32_t i = 0; i < remaining_file_count; i += dpus_per_rank) {
     for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
-      int file_index = i + dpu_id;
+      uint32_t file_index = i + dpu_id;
       if (file_index >= remaining_file_count) {
         break;
       }
@@ -302,8 +302,6 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     for (dpu_id = 0; dpu_id < dpus_to_use; dpu_id++) {
       write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
                     dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
-
-      dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
     }
 
     DPU_RANK_FOREACH(dpus, dpu_rank, rank_id) {
@@ -327,7 +325,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   return status;
 }
 
-static int cpu_main(struct jpeg_options *opts, host_results *results) {
+static int cpu_main(struct jpeg_options *opts) {
   struct timespec start, end;
   char *buffer = malloc(MAX_INPUT_LENGTH);
   uint32_t file_index = 0;
@@ -390,7 +388,6 @@ int main(int argc, char **argv) {
   int status;
   uint32_t allocated_count = 0;
   struct jpeg_options opts;
-  host_results results;
 
 #ifdef STATISTICS
   double total_time;
@@ -402,7 +399,6 @@ int main(int argc, char **argv) {
   }
 #endif // STATISTICS
 
-  memset(&results, 0, sizeof(host_results));
   memset(&opts, 0, sizeof(struct jpeg_options));
   opts.max_files = -1; // no effective maximum by default
   opts.max_ranks = -1; // no effective maximum by default
@@ -515,9 +511,9 @@ int main(int argc, char **argv) {
   }
 
   if (use_dpu)
-    status = dpu_main(&opts, &results);
+    status = dpu_main(&opts);
   else
-    status = cpu_main(&opts, &results);
+    status = cpu_main(&opts);
 
   if (status != PROG_OK) {
     fprintf(stderr, "encountered error %u\n", status);
@@ -530,16 +526,9 @@ int main(int argc, char **argv) {
   printf("Sequential reader size: %u\n", SEQREAD_CACHE_SIZE);
   printf("Number of DPUs: %u\n", dpu_count);
   printf("Number of ranks: %u\n", rank_count);
-  printf("Total line count: %u\n", results.total_line_count);
-  printf("Total matches: %u\n", results.total_match_count);
-  printf("Total files: %u\n", results.total_files);
   printf("Total data processed: %lu\n", total_data_processed);
   printf("Total time: %0.2fs\n", total_time);
   printf("Total DPUs launched: %lu\n", total_dpus_launched);
-  printf("Total instructions: %lu\n", results.total_instructions);
-  printf("Average instructions per byte: %lu\n", results.total_instructions / total_data_processed);
-  // printf("Average utilization per DPU: %2.3f%%\n",
-  //        (double) total_data_processed * 100 / (double) total_dpus_launched / (double) TOTAL_MRAM);
 #endif // STATISTICS
 
   dbg_printf("Freeing input files\n");
