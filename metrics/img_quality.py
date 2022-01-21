@@ -20,26 +20,7 @@ from statistics import mean
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 def main():
-    parser = ArgumentParser(description="Collect image quality metrics.")
-    parser.add_argument("--imgDir", "-i", help="directory in which to find images",
-        default="../data")
-    parser.add_argument("--refFmt", "-r", help="regex for filename extension/format of reference images",
-        default="(?i)(.jpg|.jpeg|.png)")
-    parser.add_argument("--outFmt", "-t", help="filename extension/format of output images",
-        default=".bmp")
-    parser.add_argument("--outputResults", "-o", help="filename extension/format of output images",
-        default="img_quality_results.csv")
-    parser.add_argument("--PSNRonly", "-n", help="only calculate PSNR",
-        action="store_true")
-    parser.add_argument("--PSNRthreshold", "-p", help="PSNR threshold to consider a file incorrect",
-        type=float, default=30.0)
-    parser.add_argument("--SSIMthreshold", "-s", help="SSIM threshold to consider a file incorrect",
-        type=float, default=0.95)
-    parser.add_argument("--verbosity", "-v", help="increase output verbosity",
-        type=int, default=logging.INFO)
-
-    args = parser.parse_args()
-
+    args = commandArgs()
     logging.basicConfig(stream=sys.stderr, level=args.verbosity)
 
     resultsFile = open(args.outputResults, 'w')
@@ -141,7 +122,27 @@ def main():
 
             else:
                 logging.warning("Couldn't find reference image for: %s", outPath)
-    
 
+def commandArgs():
+    parser = ArgumentParser(description="Collect image quality metrics.")
+    parser.add_argument("--imgDir", "-i", help="directory in which to find images",
+        default="../data")
+    parser.add_argument("--refFmt", "-r", help="regex for filename extension/format of reference images",
+        default="(?i)(.jpg|.jpeg|.png)")
+    parser.add_argument("--outFmt", "-t", help="filename extension/format of output images",
+        default=".bmp")
+    parser.add_argument("--outputResults", "-o", help="filename extension/format of output images",
+        default="qual.csv")
+    parser.add_argument("--PSNRonly", "-n", help="only calculate PSNR",
+        action="store_true")
+    parser.add_argument("--PSNRthreshold", "-p", help="PSNR threshold to consider a file incorrect",
+        type=float, default=30.0)
+    parser.add_argument("--SSIMthreshold", "-s", help="SSIM threshold to consider a file incorrect",
+        type=float, default=0.95)
+    parser.add_argument("--verbosity", "-v", help="increase output verbosity",
+        type=int, default=logging.INFO)
+
+    return parser.parse_args()
+    
 if __name__ == '__main__':
     main()
