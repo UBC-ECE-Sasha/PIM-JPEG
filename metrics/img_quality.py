@@ -131,7 +131,7 @@ def commandArgs():
         default="(?i)(.jpg|.jpeg|.png)")
     parser.add_argument("--outFmt", "-t", help="filename extension/format of output images",
         default=".bmp")
-    parser.add_argument("--outputResults", "-o", help="filename extension/format of output images",
+    parser.add_argument("--outputResults", "-o", help="name of csv file to output results to",
         default="qual.csv")
     parser.add_argument("--PSNRonly", "-n", help="only calculate PSNR",
         action="store_true")
