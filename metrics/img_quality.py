@@ -24,7 +24,7 @@ def main():
     logging.basicConfig(stream=sys.stderr, level=args.verbosity)
 
     resultsFile = open(args.outputResults, 'w')
-    results = csv.writer(resultsFile)
+    resultsWriter = csv.writer(resultsFile)
     csvHeader = ['image', 'corrupted']
     if not args.PSNRonly:
         csvHeader.append('SSIM')
@@ -34,7 +34,7 @@ def main():
     if args.channelResults:
         csvHeader += ['PSNR-R', 'PSNR-G', 'PSNR-B']
     csvHeader += ['reference path', 'output path']
-    results.writerow(csvHeader)
+    resultsWriter.writerow(csvHeader)
 
     for path, subdirs, files in os.walk(args.imgDir):
         for name in list(filter(lambda x: x[-len(args.outFmt):] == args.outFmt, files)):        
@@ -56,7 +56,8 @@ def main():
             if refPath != None and os.path.isfile(refPath):
                 try:
                     results = compare_img(refPath, outPath, PSNRonly=args.PSNRonly)
-                except Exception:
+                except Exception as e:
+                    logging.warning(str(e))
                     continue
                 corrupted = results["PSNR"] < args.PSNRthreshold
                 if not args.PSNRonly:
@@ -81,7 +82,7 @@ def main():
                         except Exception:
                             row.append(" ")
                 row += [refPath, outPath]
-                results.writerow(row)
+                resultsWriter.writerow(row)
 
             else:
                 logging.warning("Couldn't find reference image for: %s", outPath)
@@ -95,13 +96,12 @@ def compare_img(refPath, outPath, PSNRonly=False):
 
     # check dimensions
     if outImg.size != refImg.size:
-        logging.warning("Image size mismatch for image %s", name)
         logging.debug("Output image size: %s", str(outImg.size))
         logging.debug("Reference image size: %s", str(refImg.size))
-        return None
+        raise Exception("Image size mismatch for image " + name)
 
     if outImg.mode != refImg.mode:
-        logging.info("Image mode mismatch for image %s. Output converted to reference format.", name)
+        logging.info("Image mode mismatch for image " + name + ". Output converted to reference format.")
         logging.debug("Output image mode: %s", outImg.mode)
         logging.debug("Reference image mode: %s", refImg.mode)
         outImg = outImg.convert(refImg.mode)
@@ -109,21 +109,18 @@ def compare_img(refPath, outPath, PSNRonly=False):
     try:
         refPixels = np.asarray(refImg)
     except Exception as e:
-        logging.warning("Reference image %s corrupted with error: %s", refName, e)
-        return None
+        raise Exception("Reference image %s corrupted with error: %s".format(refName, e))
     try:
         outPixels = np.asarray(outImg)
     except Exception as e:
-        logging.warning("Output image %s corrupted with error: %s", name, e)
-        return None
+        raise Exception("Output image %s corrupted with error: %s".format(name, e))
 
     if outPixels.shape != refPixels.shape:
-        logging.warning("Image dimension mismatch for image %s", name)
         logging.debug("Output image dimensions: %s", str(outPixels.shape))
         logging.debug("Reference image dimensions: %s", str(refPixels.shape))
         logging.debug("Output image mode: %s", outImg.mode)
         logging.debug("Reference image mode: %s", refImg.mode)
-        return None
+        raise Exception("Image dimension mismatch for image %s".format(name))
 
     results["mode"] = refImg.mode
 

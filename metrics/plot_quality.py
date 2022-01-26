@@ -25,6 +25,9 @@ def main():
 
     df = pd.read_csv(filename)
     hist = df.hist(column=["SSIM", "PSNR"])
+    plt.show()
+    plt.savefig('qual.png')
+    
 
 def commandArgs():
     parser = ArgumentParser(description="Plot image quality metrics csv.")
