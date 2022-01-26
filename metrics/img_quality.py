@@ -27,9 +27,13 @@ def main():
     results = csv.writer(resultsFile)
     csvHeader = ['image', 'corrupted']
     if not args.PSNRonly:
-        csvHeader += ['SSIM-R', 'SSIM-G', 'SSIM-B', 'SSIM']
-    csvHeader += ['PSNR-R', 'PSNR-G', 'PSNR-B', 'PSNR',
-        'reference path', 'output path']
+        csvHeader.append('SSIM')
+        if args.channelResults:
+            csvHeader += ['SSIM-R', 'SSIM-G', 'SSIM-B']
+    csvHeader.append('PSNR')
+    if args.channelResults:
+        csvHeader += ['PSNR-R', 'PSNR-G', 'PSNR-B']
+    csvHeader += ['reference path', 'output path']
     results.writerow(csvHeader)
 
     for path, subdirs, files in os.walk(args.imgDir):
@@ -50,78 +54,103 @@ def main():
                     break
 
             if refPath != None and os.path.isfile(refPath):
-                outImg = Image.open(outPath)
-                refImg = Image.open(refPath)
-
-                # check dimensions
-                if outImg.size != refImg.size:
-                    logging.warning("Image size mismatch for image %s", name)
-                    logging.debug("Output image size: %s", str(outImg.size))
-                    logging.debug("Reference image size: %s", str(refImg.size))
-                    continue
-
-                if outImg.mode != refImg.mode:
-                    logging.info("Image mode mismatch for image %s. Output converted to reference format.", name)
-                    logging.debug("Output image mode: %s", outImg.mode)
-                    logging.debug("Reference image mode: %s", refImg.mode)
-                    outImg = outImg.convert(refImg.mode)
-
                 try:
-                    refPixels = np.asarray(refImg)
-                except Exception as e:
-                    logging.warning("Reference image %s corrupted with error: %s", refName, e)
+                    results = compare_img(refPath, outPath, PSNRonly=args.PSNRonly)
+                except Exception:
                     continue
-                try:
-                    outPixels = np.asarray(outImg)
-                except Exception as e:
-                    logging.warning("Output image %s corrupted with error: %s", name, e)
-                    continue
-
-                if outPixels.shape != refPixels.shape:
-                    logging.warning("Image dimension mismatch for image %s", name)
-                    logging.debug("Output image dimensions: %s", str(outPixels.shape))
-                    logging.debug("Reference image dimensions: %s", str(refPixels.shape))
-                    logging.debug("Output image mode: %s", outImg.mode)
-                    logging.debug("Reference image mode: %s", refImg.mode)
-                    continue
-
-                if refImg.mode == "L":
-                    psnrl = metrics.peak_signal_noise_ratio(refPixels, outPixels)
-                    psnr = [psnrl]*4
-                    if not args.PSNRonly:
-                        ssiml = metrics.structural_similarity(refPixels, outPixels)
-                        ssim = [ssiml]*4
-
-                elif refImg.mode == "RGB":
-                    psnr = [0.0]*4
-                    for i in range(3):
-                        psnr[i] = metrics.peak_signal_noise_ratio(refPixels[:, :, i], outPixels[:, :, i])
-                    psnr[3] = mean(psnr[:3])
-
-                    if not args.PSNRonly:
-                        ssim = [0.0]*4
-                        for i in range(3):
-                            ssim[i] = metrics.structural_similarity(refPixels[:, :, i], outPixels[:, :, i])
-                        ssim[3] = mean(ssim[:3])
-                else:
-                    logging.warning("Unsupported image mode for image %s", name)
-                    logging.debug("Image mode: %s", outImg.mode)
-                    continue
-
-                corrupted = psnr[3] < args.PSNRthreshold
+                corrupted = results["PSNR"] < args.PSNRthreshold
                 if not args.PSNRonly:
-                    corrupted = corrupted or ssim[3] < args.SSIMthreshold
+                    corrupted = corrupted or results["SSIM"] < args.SSIMthreshold
                 if corrupted:
                     logging.info("Output image %s may be corrupted.", name)
 
                 row = [refName, corrupted]
                 if not args.PSNRonly:
-                    row += ssim
-                row += psnr + [refPath, outPath]
+                    row.append(results["SSIM"])
+                    if args.channelResults:
+                        for channel in ["SSIM-R", "SSIM-G", "SSIM-B"]:
+                            try:
+                                row.append(channel)
+                            except Exception:
+                                row.append(" ")
+                row.append(results["PSNR"])
+                if args.channelResults:
+                    for channel in ["PSNR-R", "PSNR-G", "PSNR-B"]:
+                        try:
+                            row.append(channel)
+                        except Exception:
+                            row.append(" ")
+                row += [refPath, outPath]
                 results.writerow(row)
 
             else:
                 logging.warning("Couldn't find reference image for: %s", outPath)
+
+def compare_img(refPath, outPath, PSNRonly=False):
+    name = outPath
+    refName = refPath
+    outImg = Image.open(outPath)
+    refImg = Image.open(refPath)
+    results = {}
+
+    # check dimensions
+    if outImg.size != refImg.size:
+        logging.warning("Image size mismatch for image %s", name)
+        logging.debug("Output image size: %s", str(outImg.size))
+        logging.debug("Reference image size: %s", str(refImg.size))
+        return None
+
+    if outImg.mode != refImg.mode:
+        logging.info("Image mode mismatch for image %s. Output converted to reference format.", name)
+        logging.debug("Output image mode: %s", outImg.mode)
+        logging.debug("Reference image mode: %s", refImg.mode)
+        outImg = outImg.convert(refImg.mode)
+
+    try:
+        refPixels = np.asarray(refImg)
+    except Exception as e:
+        logging.warning("Reference image %s corrupted with error: %s", refName, e)
+        return None
+    try:
+        outPixels = np.asarray(outImg)
+    except Exception as e:
+        logging.warning("Output image %s corrupted with error: %s", name, e)
+        return None
+
+    if outPixels.shape != refPixels.shape:
+        logging.warning("Image dimension mismatch for image %s", name)
+        logging.debug("Output image dimensions: %s", str(outPixels.shape))
+        logging.debug("Reference image dimensions: %s", str(refPixels.shape))
+        logging.debug("Output image mode: %s", outImg.mode)
+        logging.debug("Reference image mode: %s", refImg.mode)
+        return None
+
+    results["mode"] = refImg.mode
+
+    if len(refImg.mode) == 1: # single channel images are 2D instead of 3D arrays
+        results["PSNR"] = metrics.peak_signal_noise_ratio(refPixels, outPixels)
+        if not PSNRonly:
+            results["SSIM"] = metrics.structural_similarity(refPixels, outPixels)
+    else:
+        psnrSum = 0
+        ssimSum = 0
+        for i, channel in enumerate(list(refImg.mode)):
+            psnr = metrics.peak_signal_noise_ratio(refPixels[:, :, i], outPixels[:, :, i])
+            results["PSNR-" + channel] = psnr
+            psnrSum += psnr
+            if not PSNRonly:
+                ssim = metrics.structural_similarity(refPixels[:, :, i], outPixels[:, :, i])
+                results["SSIM-" + channel] = ssim
+                ssimSum += ssim
+
+        results["PSNR"] = psnrSum/len(refImg.mode)
+        if not PSNRonly:
+            results["SSIM"] = ssimSum/len(refImg.mode)
+
+    return results
+
+    
+
 
 def commandArgs():
     parser = ArgumentParser(description="Collect image quality metrics.")
@@ -133,6 +162,8 @@ def commandArgs():
         default=".bmp")
     parser.add_argument("--outputResults", "-o", help="name of csv file to output results to",
         default="qual.csv")
+    parser.add_argument("--channelResults", "-c", help="whether or not to output PSNR and SSIM for each channel or just overall",
+        action="store_true")
     parser.add_argument("--PSNRonly", "-n", help="only calculate PSNR",
         action="store_true")
     parser.add_argument("--PSNRthreshold", "-p", help="PSNR threshold to consider a file incorrect",
