@@ -1,0 +1,20 @@
+image,corrupted,SSIM,PSNR,reference path,output path
+elephant1.jpg,False,0.9923483376940027,42.122284270451864,../data/elephant1.jpg,../data/elephant1-dpu.bmp
+dragon0.jpg,False,0.9894674162890055,42.3079483492792,../data/dragon0.jpg,../data/dragon0-dpu.bmp
+dog0.jpg,False,0.9827934877432408,41.73885729721989,../data/dog0.jpg,../data/dog0-dpu.bmp
+bird1.jpg,True,0.7390080367706983,13.325702302746285,../data/bird1.jpg,../data/bird1-dpu.bmp
+elephant0.jpg,True,0.9043058449113476,21.66532203798359,../data/elephant0.jpg,../data/elephant0-dpu.bmp
+bird2.jpg,True,0.938405075118037,24.489783791929366,../data/bird2.jpg,../data/bird2-dpu.bmp
+n02116738_204.JPEG,True,0.9720865841147929,27.67880955647537,../data/imagenet/n02116738_204.JPEG,../data/imagenet/n02116738_204-dpu.bmp
+n02116738_431.JPEG,True,0.015093893632106573,8.307707130405275,../data/imagenet/n02116738_431.JPEG,../data/imagenet/n02116738_431-dpu.bmp
+n02116738_124.JPEG,True,0.9831761223465699,24.07092590388225,../data/imagenet/n02116738_124.JPEG,../data/imagenet/n02116738_124-dpu.bmp
+n02116738_219.JPEG,True,0.02629624278006604,8.44303012862889,../data/imagenet/n02116738_219.JPEG,../data/imagenet/n02116738_219-dpu.bmp
+img_5.jpg,True,0.6952205173287332,15.768015134970039,../data/mnist/img_5.jpg,../data/mnist/img_5-dpu.bmp
+img_1.jpg,True,0.7442833864301387,14.611822953732807,../data/mnist/img_1.jpg,../data/mnist/img_1-dpu.bmp
+img_9.jpg,True,0.7621591780424285,14.910782148966057,../data/mnist/img_9.jpg,../data/mnist/img_9-dpu.bmp
+img_7.jpg,True,0.7566342955843592,14.179963454554901,../data/mnist/img_7.jpg,../data/mnist/img_7-dpu.bmp
+img_8.jpg,True,0.2000041679582089,9.968037957557277,../data/mnist/img_8.jpg,../data/mnist/img_8-dpu.bmp
+img_6.jpg,True,0.6603146205576169,16.403266839466703,../data/mnist/img_6.jpg,../data/mnist/img_6-dpu.bmp
+img_3.jpg,True,0.5879563977376185,14.832849113987542,../data/mnist/img_3.jpg,../data/mnist/img_3-dpu.bmp
+img_4.jpg,True,0.7076010536142118,17.684356232009584,../data/mnist/img_4.jpg,../data/mnist/img_4-dpu.bmp
+img_2.jpg,True,0.7446300459996155,13.657899959136977,../data/mnist/img_2.jpg,../data/mnist/img_2-dpu.bmp

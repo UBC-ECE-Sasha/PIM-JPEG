@@ -6,3 +6,6 @@ jpeg-dpu-*
 DSCF5148.jpg
 
 *.csv
+!scripts/qual.csv
+
+metrics/*.png

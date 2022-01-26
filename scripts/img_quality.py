@@ -147,8 +147,6 @@ def compare_img(refPath, outPath, PSNRonly=False):
     return results
 
     
-
-
 def commandArgs():
     parser = ArgumentParser(description="Collect image quality metrics.")
     parser.add_argument("--imgDir", "-i", help="directory in which to find images",
