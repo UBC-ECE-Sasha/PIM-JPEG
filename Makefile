@@ -12,11 +12,17 @@ ifeq ($(DEBUG_DPU), 1)
 	CFLAGS+=-DDEBUG_DPU
 endif
 
-# Statistics are on by default
-STATS ?= 1
+# Collect statistics about various operations
+STATS ?= 0
+
+# Size of the sequential reader
 SEQREAD_CACHE_SIZE ?= 256
-MAX_FILES_PER_DPU ?= 64
-NR_TASKLETS ?= 8
+
+# How many files can be assigned to a single DPU
+MAX_FILES_PER_DPU ?= 1
+
+# How many tasklets should each DPU use for decompression
+NR_TASKLETS ?= 1
 
 ifeq ($(STATS), 1)
 	CFLAGS+=-DSTATISTICS

@@ -164,8 +164,8 @@ static int read_all_markers(JpegDecompressor *d) {
   jpegInfo.image_data_start = d->file_index + d->cache_index;
   jpegInfo.size_per_tasklet = (jpegInfo.length - jpegInfo.image_data_start + (NR_TASKLETS - 1)) / NR_TASKLETS;
 
-  output.image_width = jpegInfo.image_width;
-  output.image_height = jpegInfo.image_height;
+  output.width = jpegInfo.image_width;
+  output.height = jpegInfo.image_height;
   output.padding = jpegInfo.padding;
   output.mcu_width_real = jpegInfo.mcu_width_real;
 
@@ -201,8 +201,8 @@ static void crop_and_scale(JpegDecompressor *d) {
     jpeg_scale(d, scale_factor, scale_factor);
   }
 
-  output.image_width = jpegInfo.image_width;
-  output.image_height = jpegInfo.image_height;
+  output.width = jpegInfo.image_width;
+  output.height = jpegInfo.image_height;
   output.mcu_width_real = jpegInfo.mcu_width_real;
 }
 

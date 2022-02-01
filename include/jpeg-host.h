@@ -43,22 +43,6 @@ typedef struct file_descriptor {
   uint32_t length;
 } file_descriptor;
 
-typedef struct host_dpu_descriptor {
-  uint32_t perf; // value from the DPU's performance counter
-  char *buffer;  // concatenated buffer for this DPU
-  char *filename[MAX_FILES_PER_DPU];
-  file_descriptor files[MAX_FILES_PER_DPU];
-  file_stats stats[MAX_FILES_PER_DPU];
-} host_dpu_descriptor;
-
-typedef struct host_rank_context {
-  uint32_t dpu_count;        // how many dpus are filled in the descriptor array
-  host_dpu_descriptor *dpus; // the descriptors for the dpus in this rank
-#ifdef STATISTICS
-  struct timespec start_rank;
-#endif // STATISTICS
-} host_rank_context;
-
 typedef struct dpu_settings_t {
   char *buffer;
   uint64_t file_length;
@@ -74,11 +58,39 @@ typedef struct dpu_inputs_t {
 } dpu_inputs_t;
 
 typedef struct dpu_output_t {
-  uint16_t image_width;
-  uint16_t image_height;
+  uint16_t width;
+  uint16_t height;
   uint32_t padding;
   uint32_t mcu_width_real;
   uint32_t sum_rgb[3];
 } dpu_output_t;
+
+typedef struct host_results
+{
+	uint32_t total_line_count;
+	uint32_t total_match_count;
+	uint32_t total_files;
+	uint64_t total_instructions;
+} host_results;
+
+typedef struct host_dpu_descriptor {
+  uint32_t perf; // value from the DPU's performance counter
+  char *in_buffer;  // concatenated buffer for this DPU
+  uint32_t in_length; // total length of in_buffer (in bytes)
+  short *out_buffer; // decompressed image data
+  uint32_t file_count;	// how many files are assigned to this DPU
+  dpu_output_t img[MAX_FILES_PER_DPU];  // decompressed image metadata
+  char *filename[MAX_FILES_PER_DPU];
+  file_descriptor files[MAX_FILES_PER_DPU];
+  file_stats stats[MAX_FILES_PER_DPU];
+} host_dpu_descriptor;
+
+typedef struct host_rank_context {
+  uint32_t dpu_count;        // how many dpus are filled in the descriptor array
+  host_dpu_descriptor *dpus; // the descriptors for the dpus in this rank
+#ifdef STATISTICS
+  struct timespec start_rank;
+#endif // STATISTICS
+} host_rank_context;
 
 #endif /* _JPEG_HOST__H */
