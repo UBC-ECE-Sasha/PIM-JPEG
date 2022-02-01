@@ -236,11 +236,6 @@ int main() {
   barrier_wait(&idct_barrier);
   inverse_dct_convert(&decompressor);
 
-  barrier_wait(&crop_barrier);
-  if (decompressor.tasklet_id == 0) {
-    crop_and_scale(&decompressor);
-  }
-
   barrier_wait(&prep0_barrier);
   if (input.horizontal_flip) {
     horizontal_flip(&decompressor);
