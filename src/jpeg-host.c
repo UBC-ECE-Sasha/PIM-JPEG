@@ -69,14 +69,8 @@ void scale_rank(struct dpu_set_t dpu_rank, dpu_settings_t *dpu_settings, uint32_
     }
 
     DPU_ASSERT(dpu_copy_to(dpu, "input", 0, &dpu_inputs, sizeof(dpu_inputs_t)));
-
-#ifndef BULK_TRANSFER
-    DPU_ASSERT(
-        dpu_copy_to(dpu, "file_buffer", 0, dpu_settings[dpu_id].buffer, ALIGN(dpu_settings[dpu_id].file_length, 8)));
-#endif
   }
 
-#ifdef BULK_TRANSFER
   int longest_length = 0;
 
   DPU_FOREACH(dpu_rank, dpu, dpu_id) {
@@ -91,7 +85,6 @@ void scale_rank(struct dpu_set_t dpu_rank, dpu_settings_t *dpu_settings, uint32_
     }
   }
   DPU_ASSERT(dpu_push_xfer(dpu_rank, DPU_XFER_TO_DPU, "file_buffer", 0, ALIGN(longest_length, 8), DPU_XFER_DEFAULT));
-#endif
 
   DPU_ASSERT(dpu_launch(dpu_rank, DPU_ASYNCHRONOUS));
 }
@@ -100,7 +93,6 @@ int read_results_dpu_rank(struct dpu_set_t dpu_rank, dpu_output_t *dpu_outputs, 
   struct dpu_set_t dpu;
   uint8_t dpu_id;
 
-#ifdef BULK_TRANSFER
   DPU_FOREACH(dpu_rank, dpu, dpu_id) {
     DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) &dpu_outputs[dpu_id]));
   }
@@ -116,14 +108,6 @@ int read_results_dpu_rank(struct dpu_set_t dpu_rank, dpu_output_t *dpu_outputs, 
   }
   DPU_ASSERT(dpu_push_xfer(dpu_rank, DPU_XFER_FROM_DPU, "MCU_buffer", 0, MEGABYTE(16),
                            DPU_XFER_DEFAULT));
-#endif // BULK_TRANSFER
-
-#ifndef BULK_TRANSFER
-  DPU_FOREACH(dpu_rank, dpu, dpu_id) {
-    DPU_ASSERT(dpu_copy_from(dpu, "output", 0, &dpu_outputs[dpu_id], sizeof(dpu_output_t)));
-    DPU_ASSERT(dpu_copy_from(dpu, "MCU_buffer", 0, MCU_buffer[dpu_id], MEGABYTE(16)));
-  }
-#endif // BULK_TRANSFER
 
   return 0;
 }
@@ -202,10 +186,6 @@ static int dpu_main(struct jpeg_options *opts) {
 #ifdef STATISTICS
   // struct timespec start_load, stop_load;
 #endif // STATISTICS
-
-#ifdef BULK_TRANSFER
-  printf("Using bulk transfer\n");
-#endif // BULK_TRANSFER
 
   // allocate all of the DPUS up-front, then check to see how many we got
   // status = dpu_alloc(DPU_ALLOCATE_ALL, NULL, &dpus);
