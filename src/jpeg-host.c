@@ -12,14 +12,12 @@
 #include <sys/types.h>
 #include <time.h>
 
-// #include "PIM-common/host/include/host.h"
 #include "bmp.h"
 #include "host.h"
 #include "jpeg-common.h"
 #include "jpeg-host.h"
 
 #define DPU_PROGRAM "src/dpu/jpeg-dpu"
-#define MIN_CHUNK_SIZE 256 // not worthwhile making another tasklet work for data less than this
 #define TEMP_LENGTH 256
 #define ALL_RANKS (rank_count == 64 ? 0xFFFFFFFFFFFFFFFF : (1UL << rank_count) - 1)
 

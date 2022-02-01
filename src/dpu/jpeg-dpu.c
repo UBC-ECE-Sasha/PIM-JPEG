@@ -19,8 +19,6 @@ BARRIER_INIT(prep0_barrier, NR_TASKLETS);
 BARRIER_INIT(prep1_barrier, NR_TASKLETS);
 BARRIER_INIT(prep2_barrier, NR_TASKLETS);
 
-#define DEBUG 0
-
 #if DEBUG
 static void print_jpeg_decompressor() {
   printf("\n********** DQT **********\n");
