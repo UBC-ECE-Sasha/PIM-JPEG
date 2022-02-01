@@ -114,16 +114,14 @@ int read_results_dpu_rank(struct dpu_set_t dpu_rank, dpu_output_t *dpu_outputs, 
       largest_pixel_count = pixel_count;
     }
   }
-  DPU_ASSERT(dpu_push_xfer(dpu_rank, DPU_XFER_FROM_DPU, "MCU_buffer", 0, sizeof(short) * largest_pixel_count * 3,
+  DPU_ASSERT(dpu_push_xfer(dpu_rank, DPU_XFER_FROM_DPU, "MCU_buffer", 0, MEGABYTE(16),
                            DPU_XFER_DEFAULT));
 #endif // BULK_TRANSFER
 
 #ifndef BULK_TRANSFER
   DPU_FOREACH(dpu_rank, dpu, dpu_id) {
     DPU_ASSERT(dpu_copy_from(dpu, "output", 0, &dpu_outputs[dpu_id], sizeof(dpu_output_t)));
-    DPU_ASSERT(dpu_copy_from(dpu, "MCU_buffer", 0, MCU_buffer[dpu_id],
-                             sizeof(short) * ALIGN(dpu_outputs[dpu_id].image_height, 8) *
-                                 ALIGN(dpu_outputs[dpu_id].image_width, 8) * 3));
+    DPU_ASSERT(dpu_copy_from(dpu, "MCU_buffer", 0, MCU_buffer[dpu_id], MEGABYTE(16)));
   }
 #endif // BULK_TRANSFER
 
@@ -251,7 +249,7 @@ static int dpu_main(struct jpeg_options *opts) {
   dpu_output_t *dpu_outputs = calloc(dpus_per_rank, sizeof(dpu_output_t));
   short **MCU_buffer = malloc(sizeof(short *) * dpus_per_rank);
   for (dpu_id = 0; dpu_id < dpus_per_rank; dpu_id++) {
-    MCU_buffer[dpu_id] = malloc(sizeof(short) * 87380 * 3 * 64);
+    MCU_buffer[dpu_id] = malloc(MEGABYTE(16)); // use the largest possible output for now
   }
 
   for (uint32_t i = 0; i < remaining_file_count; i += dpus_per_rank) {
