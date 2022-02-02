@@ -9,3 +9,4 @@ DSCF5148.jpg
 !scripts/qual.csv
 
 metrics/*.png
+tiny-imagenet-200/*
