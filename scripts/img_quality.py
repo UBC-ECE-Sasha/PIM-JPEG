@@ -33,7 +33,7 @@ def main():
     csvHeader.append('PSNR')
     if args.channelResults:
         csvHeader += ['PSNR-R', 'PSNR-G', 'PSNR-B']
-    csvHeader += ['reference path', 'output path']
+    csvHeader += ['format', 'reference path', 'output path']
     resultsWriter.writerow(csvHeader)
 
     for path, subdirs, files in os.walk(args.imgDir):
@@ -81,7 +81,7 @@ def main():
                             row.append(channel)
                         except Exception:
                             row.append(" ")
-                row += [refPath, outPath]
+                row += [results["refMode"], refPath, outPath]
                 resultsWriter.writerow(row)
 
             else:
@@ -100,6 +100,7 @@ def compare_img(refPath, outPath, PSNRonly=False):
         logging.debug("Reference image size: %s", str(refImg.size))
         raise Exception("Image size mismatch for image " + name)
 
+    results["refMode"] = refImg.mode
     if outImg.mode != refImg.mode:
         logging.info("Image mode mismatch for image " + name + ". Output converted to reference format.")
         logging.debug("Output image mode: %s", outImg.mode)
