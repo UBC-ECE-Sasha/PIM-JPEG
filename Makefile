@@ -12,21 +12,17 @@ ifeq ($(DEBUG_DPU), 1)
 	CFLAGS+=-DDEBUG_DPU
 endif
 
-# Default NR_DPUS and NR_TASKLETS
-NR_DPUS = 1
-NR_TASKLETS = 8
+# Collect statistics about various operations
+STATS ?= 0
 
-# Bulk (dpu_prepare_xfer) is default
-BULK = 0
+# Size of the sequential reader
+SEQREAD_CACHE_SIZE ?= 256
 
-# Statistics are on by default
-STATS = 1
-SEQREAD_CACHE_SIZE=256
-MAX_FILES_PER_DPU=64
+# How many files can be assigned to a single DPU
+MAX_FILES_PER_DPU ?= 1
 
-ifeq ($(BULK), 1)
-	CFLAGS+=-DBULK_TRANSFER
-endif
+# How many tasklets should each DPU use for decompression
+NR_TASKLETS ?= 1
 
 ifeq ($(STATS), 1)
 	CFLAGS+=-DSTATISTICS
@@ -38,19 +34,17 @@ SOURCE = src/jpeg-host.c src/bmp.c src/jpeg-cpu.c
 
 default: all
 
-all: host
+all: dpu host
 
 clean:
 	$(RM) host-*
 	$(MAKE) -C src/dpu clean
 
 dpu:
-	DEBUG=$(DEBUG_DPU) NR_TASKLETS=$(NR_TASKLETS) SEQREAD_CACHE_SIZE=$(SEQREAD_CACHE_SIZE) MAX_FILES_PER_DPU=$(MAX_FILES_PER_DPU)  $(MAKE) -C dpu-grep
+	$(MAKE) DEBUG=$(DEBUG_DPU) NR_TASKLETS=$(NR_TASKLETS) -C src/dpu
 
 host: $(SOURCE)
 	$(CC) $(CFLAGS) -DNR_TASKLETS=$(NR_TASKLETS) -DMAX_FILES_PER_DPU=$(MAX_FILES_PER_DPU) $^ -o $@-$(NR_TASKLETS) $(DPU_OPTS)
-	NR_DPUS=$(NR_DPUS) NR_TASKLETS=$(NR_TASKLETS) \
-	$(MAKE) -C src/dpu
 
 tags:
 	ctags -R -f tags . ~/projects/upmem/upmem-sdk

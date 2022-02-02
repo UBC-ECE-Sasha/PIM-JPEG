@@ -17,10 +17,6 @@
 #define TIME_DIFFERENCE(_start, _end) ((_end.tv_sec + _end.tv_nsec / 1.0e9) - (_start.tv_sec + _start.tv_nsec / 1.0e9))
 #endif
 
-#define DEBUG 0
-
-// #define M_PI 3.14159265358979323846
-
 #define M0 1.84775906502257351225 // 118 >> 6 or 473 >> 8
 #define M1 1.41421356237309504880 // 90 >> 6  or 181 >> 7
 #define M2 1.08239220029239396879 // 69 >> 6  or 277 >> 8

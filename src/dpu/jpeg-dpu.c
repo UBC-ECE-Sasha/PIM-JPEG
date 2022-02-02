@@ -19,8 +19,6 @@ BARRIER_INIT(prep0_barrier, NR_TASKLETS);
 BARRIER_INIT(prep1_barrier, NR_TASKLETS);
 BARRIER_INIT(prep2_barrier, NR_TASKLETS);
 
-#define DEBUG 0
-
 #if DEBUG
 static void print_jpeg_decompressor() {
   printf("\n********** DQT **********\n");
@@ -166,8 +164,8 @@ static int read_all_markers(JpegDecompressor *d) {
   jpegInfo.image_data_start = d->file_index + d->cache_index;
   jpegInfo.size_per_tasklet = (jpegInfo.length - jpegInfo.image_data_start + (NR_TASKLETS - 1)) / NR_TASKLETS;
 
-  output.image_width = jpegInfo.image_width;
-  output.image_height = jpegInfo.image_height;
+  output.width = jpegInfo.image_width;
+  output.height = jpegInfo.image_height;
   output.padding = jpegInfo.padding;
   output.mcu_width_real = jpegInfo.mcu_width_real;
 
@@ -203,8 +201,8 @@ static void crop_and_scale(JpegDecompressor *d) {
     jpeg_scale(d, scale_factor, scale_factor);
   }
 
-  output.image_width = jpegInfo.image_width;
-  output.image_height = jpegInfo.image_height;
+  output.width = jpegInfo.image_width;
+  output.height = jpegInfo.image_height;
   output.mcu_width_real = jpegInfo.mcu_width_real;
 }
 
@@ -235,11 +233,6 @@ int main() {
   // All tasklets should wait until tasklet 0 has finished adjusting the DC coefficients
   barrier_wait(&idct_barrier);
   inverse_dct_convert(&decompressor);
-
-  barrier_wait(&crop_barrier);
-  if (decompressor.tasklet_id == 0) {
-    crop_and_scale(&decompressor);
-  }
 
   barrier_wait(&prep0_barrier);
   if (input.horizontal_flip) {
