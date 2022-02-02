@@ -24,7 +24,13 @@ def main():
         return
 
     df = pd.read_csv(filename)
-    hist = df.hist(column=["SSIM", "PSNR"])
+    cols = []
+    if not args.SSIMonly:
+        cols += ["PSNR"]
+    if not args.PSNRonly:
+        cols += ["SSIM"]
+        
+    hist = df.hist(column=cols)
     plt.show()
     plt.savefig('qual.png')
     
@@ -32,6 +38,12 @@ def main():
 def commandArgs():
     parser = ArgumentParser(description="Plot image quality metrics csv.")
     parser.add_argument("filename", nargs=1, help="csv file with quality results")
+    parser.add_argument("--PSNRonly", "-n", help="only display PSNR",
+        action="store_true")
+    parser.add_argument("--SSIMonly", "-s", help="only display SSIM",
+        action="store_true")
+    parser.add_argument("--output", "-o", help="output filename",
+        type=str, default="qual.png")
     parser.add_argument("--verbosity", "-v", help="increase output verbosity",
         type=int, default=logging.INFO)
 
