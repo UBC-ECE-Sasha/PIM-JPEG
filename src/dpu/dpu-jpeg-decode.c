@@ -2,9 +2,10 @@
 #include <mutex.h>
 #include <stdio.h>
 
+#include "jpeg-host.h"
 #include "dpu-jpeg.h"
 
-__mram_noinit short MCU_buffer[NR_TASKLETS][16776960 / NR_TASKLETS];
+__mram_noinit short MCU_buffer[NR_TASKLETS][MEGABYTE(16) / NR_TASKLETS];
 
 #define PREWRITE_SIZE 768
 __dma_aligned short MCU_buffer_cache[NR_TASKLETS][PREWRITE_SIZE];

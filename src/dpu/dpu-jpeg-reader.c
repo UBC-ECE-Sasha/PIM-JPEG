@@ -1,9 +1,10 @@
 #include <mram.h>
 #include <stdio.h>
 
+#include "jpeg-host.h"
 #include "dpu-jpeg.h"
 
-__mram_noinit char file_buffer[16 << 20];
+__mram_noinit char file_buffer[MAX_INPUT_LENGTH];
 
 #define PREFETCH_SIZE 1024
 __dma_aligned char file_buffer_cache[NR_TASKLETS][PREFETCH_SIZE];

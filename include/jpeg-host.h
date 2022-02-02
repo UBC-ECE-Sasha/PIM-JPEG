@@ -12,13 +12,13 @@
 #endif
 
 #define MAX_INPUT_LENGTH MEGABYTE(16)
+#define MAX_DECODED_DATA_SIZE MEGABYTE(32)
 
 enum { PROG_OK = 0, PROG_INVALID_INPUT, PROG_BUFFER_TOO_SMALL, PROG_OUTPUT_ERROR, PROG_FAULT };
 
-enum option_flags {
-  OPTION_FLAG_COUNT_MATCHES,
-  OPTION_FLAG_OUT_BYTE,
-  OPTION_FLAG_MULTIPLE_FILES, // multiple files per DPU
+enum
+{
+	OPTION_FLAG_HORIZONTAL_FLIP,
 };
 
 struct jpeg_options {
@@ -30,7 +30,6 @@ struct jpeg_options {
 
   uint32_t scale_width;
   uint32_t scale_height;
-  uint32_t horizontal_flip;
 } __attribute__((aligned(8)));
 
 typedef struct file_stats {
@@ -47,15 +46,15 @@ typedef struct dpu_settings_t {
   char *buffer;
   uint64_t file_length;
   char *filename;
-  uint32_t scale_width;
-  uint32_t horizontal_flip;
 } dpu_settings_t;
 
-typedef struct dpu_inputs_t {
-  uint64_t file_length;
-  uint32_t scale_width;
-  uint32_t horizontal_flip;
-} dpu_inputs_t;
+typedef struct dpu_inputs_t
+{
+	uint32_t file_length;
+	uint32_t scale_width;
+	uint32_t flags;					// see OPTION_FLAG_
+	uint32_t padding;
+} dpu_inputs_t __attribute__((aligned(8)));
 
 typedef struct dpu_output_t {
   uint16_t width;
@@ -63,7 +62,8 @@ typedef struct dpu_output_t {
   uint32_t padding;
   uint32_t mcu_width_real;
   uint32_t sum_rgb[3];
-} dpu_output_t;
+	uint32_t length;		// total length of data buffer, in bytes
+} dpu_output_t __attribute__((aligned(8)));
 
 typedef struct host_results
 {

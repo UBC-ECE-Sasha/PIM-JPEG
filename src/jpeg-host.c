@@ -28,7 +28,7 @@
 
 #define TIME_NOW(_t) (clock_gettime(CLOCK_MONOTONIC, (_t)))
 
-const char options[] = "cdm:r:s:Mw:f";
+const char options[] = "cdm:r:s:w:f";
 static uint32_t rank_count, dpu_count;
 static uint32_t dpus_per_rank;
 static char **input_files = NULL;
@@ -63,9 +63,11 @@ void scale_rank(struct dpu_set_t dpu_rank, host_rank_context *desc, struct jpeg_
 	// copy the input metadata to the DPUs
 	DPU_FOREACH(dpu_rank, dpu, dpu_id)
 	{
+		dpu_inputs[dpu_id].flags = 0;
 		dpu_inputs[dpu_id].file_length = input[dpu_id].in_length;
 		dpu_inputs[dpu_id].scale_width = opts->scale_width;
-		dpu_inputs[dpu_id].horizontal_flip = opts->horizontal_flip;
+		if (opts->flags & (1 << OPTION_FLAG_HORIZONTAL_FLIP))
+			dpu_inputs[dpu_id].flags |= (1 << OPTION_FLAG_HORIZONTAL_FLIP);
 
 		DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) &dpu_inputs[dpu_id]));
 	}
@@ -109,14 +111,30 @@ int read_results_dpu_rank(struct dpu_set_t dpu_rank, struct host_rank_context *r
 	uint64_t largest_size = 0;
 	DPU_FOREACH(dpu_rank, dpu, dpu_id)
 	{
-		uint32_t buf_size = MEGABYTE(16);
+		uint32_t buf_size = rank_ctx->dpus[dpu_id].img[0].length;
 		dbg_printf("Out buffer size: %u\n", buf_size);
-		rank_ctx->dpus[dpu_id].out_buffer = malloc(buf_size);
+
+		if (buf_size > MAX_DECODED_DATA_SIZE)
+		{
+			// set the length to 0 to indicate no image
+			rank_ctx->dpus[dpu_id].img[0].length = 0;
+			printf("File %s on %u too large - skipping\n", rank_ctx->dpus[dpu_id].filename[0], dpu_id);
+			continue;
+		}
+
+		rank_ctx->dpus[dpu_id].out_buffer = (short*)malloc(MAX_DECODED_DATA_SIZE);
 		DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) rank_ctx->dpus[dpu_id].out_buffer));
+
 		if (buf_size > largest_size)
 			largest_size = buf_size;
 	}
-	DPU_ASSERT(dpu_push_xfer(dpu_rank, DPU_XFER_FROM_DPU, "MCU_buffer", 0, largest_size, DPU_XFER_DEFAULT));
+
+	// only copy if at least one DPU completed successfully
+	if (largest_size > 0)
+	{
+		dbg_printf("Copying %u bytes from DPU\n", ALIGN(largest_size, 8));
+		DPU_ASSERT(dpu_push_xfer(dpu_rank, DPU_XFER_FROM_DPU, "MCU_buffer", 0, ALIGN(largest_size, 8), DPU_XFER_DEFAULT));
+	}
 
 	DPU_FOREACH(dpu_rank, dpu, dpu_id)
 	{
@@ -204,9 +222,13 @@ int check_for_completed_rank(struct dpu_set_t dpus, uint64_t* rank_status, struc
 
 					for (uint32_t file=0; file < rank_ctx->dpus[dpu_id].file_count; file++)
 					{
-						// do something with the output
-						dpu_output_t *img = &desc->img[file];
-						write_bmp_dpu(desc->filename[file], img->width, img->height, img->padding, img->mcu_width_real, desc->out_buffer);
+						// make sure the image data is valid
+						if (desc->img[file].length)
+						{
+							// write it to a file
+							dpu_output_t *img = &desc->img[file];
+							write_bmp_dpu(desc->filename[file], img->width, img->height, img->padding, img->mcu_width_real, desc->out_buffer);
+						}
 
 						// free the memory of the descriptor
 						free(rank_ctx->dpus[dpu_id].filename[file]);
@@ -547,7 +569,7 @@ int main(int argc, char **argv) {
   opts.max_ranks = -1; // no effective maximum by default
   opts.scale_width = 256;
   opts.scale_height = 256;
-  opts.horizontal_flip = 0; // no horizontal flip by default
+  opts.flags = 0;
 
   while ((opt = getopt(argc, argv, options)) != -1) {
     switch (opt) {
@@ -567,17 +589,12 @@ int main(int argc, char **argv) {
         opts.scale = strtoul(optarg, NULL, 0);
         break;
 
-      case 'M':
-        opts.flags |= (1 << OPTION_FLAG_MULTIPLE_FILES);
-        dbg_printf("Allocating multiple files per DPU\n");
-        break;
-
       case 'w':
         opts.scale_width = strtoul(optarg, NULL, 0);
         break;
 
       case 'f':
-        opts.horizontal_flip = 1;
+        opts.flags |= (1 << OPTION_FLAG_HORIZONTAL_FLIP);
         break;
 
       case 'C':
