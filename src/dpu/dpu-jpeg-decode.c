@@ -192,9 +192,37 @@ static void concat_adjust_mcus(JpegDecompressor *d, int row, int col) {
 }
 
 static int decode_mcu(JpegDecompressor *d, int component_index, short *previous_dc) {
-  QuantizationTable *q_table = &jpegInfo.quant_tables[jpegInfo.color_components[component_index].quant_table_id];
-  HuffmanTable *dc_table = &jpegInfo.dc_huffman_tables[jpegInfo.color_components[component_index].dc_huffman_table_id];
-  HuffmanTable *ac_table = &jpegInfo.ac_huffman_tables[jpegInfo.color_components[component_index].ac_huffman_table_id];
+  QuantizationTable *q_table;
+  HuffmanTable *dc_table;
+  HuffmanTable *ac_table;
+  uint8_t index;
+
+	index = jpegInfo.color_components[component_index].quant_table_id;
+	if (index >= MAX_QUANT_TABLES)
+	{
+		printf("Invalid quantization table index: %u\n", index);
+		return -2;
+	}
+
+  q_table = &jpegInfo.quant_tables[index];
+
+	index = jpegInfo.color_components[component_index].dc_huffman_table_id;
+	if (index >= MAX_HUFFMAN_TABLES)
+	{
+		printf("Invalid dc huffman table index: %u\n", index);
+		return -3;
+	}
+
+  dc_table = &jpegInfo.dc_huffman_tables[index];
+
+	index = jpegInfo.color_components[component_index].ac_huffman_table_id;
+	if (index >= MAX_HUFFMAN_TABLES)
+	{
+		printf("Invalid ac huffman table index: %u\n", index);
+		return -3;
+	}
+
+  ac_table = &jpegInfo.ac_huffman_tables[index];
 
   // Get DC value for this MCU block
   uint8_t dc_length = huff_decode(d, dc_table);

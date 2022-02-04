@@ -3,7 +3,8 @@
 
 #include <stdint.h>
 
-#define MAX_HUFFMAN_TABLES 2
+#define MAX_HUFFMAN_TABLES 2 // used for both DC and AC tables
+#define MAX_QUANT_TABLES 4
 
 #define JPEG_VALID 0
 #define JPEG_INVALID_ERROR_CODE 1
@@ -118,7 +119,7 @@ typedef struct JpegInfo {
   uint32_t size_per_tasklet; // number of bytes to decode per tasklet
 
   // from DQT
-  QuantizationTable quant_tables[4];
+  QuantizationTable quant_tables[MAX_QUANT_TABLES];
 
   // from DRI
   uint16_t restart_interval;
