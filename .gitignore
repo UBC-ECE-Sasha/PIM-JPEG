@@ -6,7 +6,7 @@ jpeg-dpu-*
 DSCF5148.jpg
 
 *.csv
-!scripts/qual.csv
+!scripts/output/qual.csv
 
 metrics/*.png
 tiny-imagenet-200/*
