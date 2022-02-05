@@ -47,13 +47,14 @@ def main():
             refPath = None
             pattern = re.compile(args.refFmt)
 
+            refName = None
             for f in imgMatches:
-                if pattern.search(f) != None:
+                if pattern.search(f) != None and f[len(imgName)] == '.':
                     refName = f
                     refPath = os.path.join(path, f)
                     break
 
-            if refPath != None and os.path.isfile(refPath):
+            if refName != None and os.path.isfile(refPath):
                 try:
                     results = compare_img(refPath, outPath, PSNRonly=args.PSNRonly)
                 except Exception as e:
@@ -157,7 +158,7 @@ def commandArgs():
     parser.add_argument("--outFmt", "-t", help="filename extension/format of output images",
         default=".bmp")
     parser.add_argument("--outputResults", "-o", help="name of csv file to output results to",
-        default="qual.csv")
+        default="output/qual.csv")
     parser.add_argument("--channelResults", "-c", help="whether or not to output PSNR and SSIM for each channel or just overall",
         action="store_true")
     parser.add_argument("--PSNRonly", "-n", help="only calculate PSNR",
