@@ -10,5 +10,8 @@ DSCF5148.jpg
 
 metrics/*.png
 tiny-imagenet-200/*
+tiny-imagenet-200-dpu/*
+
+*.pyc
 
 *.zip
