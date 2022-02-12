@@ -19,6 +19,7 @@ BARRIER_INIT(crop_barrier, NR_TASKLETS);
 BARRIER_INIT(prep0_barrier, NR_TASKLETS);
 BARRIER_INIT(prep1_barrier, NR_TASKLETS);
 BARRIER_INIT(prep2_barrier, NR_TASKLETS);
+BARRIER_INIT(concat_barrier, NR_TASKLETS);
 
 #if DEBUG
 static void print_jpeg_decompressor() {
@@ -92,8 +93,8 @@ static void print_jpeg_decompressor() {
   printf("Successive approximation low: %d\n\n", jpegInfo.Al);
 
   printf("\n********** BMP **********\n");
-  printf("MCU width: %d\n", jpegInfo.mcu_width);
-  printf("MCU height: %d\n", jpegInfo.mcu_height);
+  printf("MCU width: %d\n", jpegInfo.mcu_count_h);
+  printf("MCU height: %d\n", jpegInfo.mcu_count_v);
   printf("BMP padding: %d\n", jpegInfo.padding);
 }
 #endif
@@ -123,8 +124,8 @@ static void init_jpeg_info() {
   jpegInfo.Ah = 0;
   jpegInfo.Al = 0;
 
-  jpegInfo.mcu_width = 0;
-  jpegInfo.mcu_height = 0;
+  jpegInfo.mcu_count_h = 0;
+  jpegInfo.mcu_count_v = 0;
   jpegInfo.padding = 0;
 
   for (int i = 0; i < NR_TASKLETS; i++) {
@@ -168,14 +169,14 @@ static int read_all_markers(JpegDecompressor *d) {
   output.width = jpegInfo.image_width;
   output.height = jpegInfo.image_height;
   output.padding = jpegInfo.padding;
-  output.mcu_width_real = jpegInfo.mcu_width_real;
+  output.mcu_width_real = jpegInfo.mcu_count_h_real;
 
 	int color_index = jpegInfo.num_color_components - 1;
 	output.length = sizeof(short) *
-	(((jpegInfo.mcu_height + jpegInfo.color_components[color_index].v_samp_factor) * jpegInfo.mcu_width_real + (jpegInfo.mcu_width + jpegInfo.color_components[color_index].h_samp_factor)) * jpegInfo.num_color_components) << 6;
+	(((jpegInfo.mcu_count_v + jpegInfo.color_components[color_index].v_samp_factor) * jpegInfo.mcu_count_h_real + (jpegInfo.mcu_count_h + jpegInfo.color_components[color_index].h_samp_factor)) * jpegInfo.num_color_components) << 6;
 
 #if DEBUG
-  //print_jpeg_decompressor();
+  print_jpeg_decompressor();
 #endif
 
   return 0;
@@ -208,7 +209,7 @@ static void crop_and_scale(JpegDecompressor *d) {
 
   output.width = jpegInfo.image_width;
   output.height = jpegInfo.image_height;
-  output.mcu_width_real = jpegInfo.mcu_width_real;
+  output.mcu_width_real = jpegInfo.mcu_count_h_real;
 }
 
 int main() {
@@ -243,13 +244,14 @@ int main() {
     return 1;
   }
 
+  barrier_wait(&concat_barrier);
+  //concat_adjust_mcus(&decompressor, 0, 0);
+
   // All tasklets should wait until tasklet 0 has finished adjusting the DC coefficients
   barrier_wait(&idct_barrier);
   inverse_dct_convert(&decompressor);
 
   barrier_wait(&prep0_barrier);
-	if (input.flags & 1 << OPTION_FLAG_HORIZONTAL_FLIP)
-		horizontal_flip(&decompressor);
 
   barrier_wait(&prep1_barrier);
   find_sum_rgb(&decompressor);

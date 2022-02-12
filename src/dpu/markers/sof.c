@@ -96,16 +96,16 @@ static int read_SOF_color_component_info(JpegDecompressor *d) {
 }
 
 static void initialize_MCU_height_width() {
-  jpegInfo.mcu_height = (jpegInfo.image_height + 7) / 8;
-  jpegInfo.mcu_width = (jpegInfo.image_width + 7) / 8;
+  jpegInfo.mcu_count_v = (jpegInfo.image_height + 7) / 8;
+  jpegInfo.mcu_count_h = (jpegInfo.image_width + 7) / 8;
   jpegInfo.padding = jpegInfo.image_width % 4;
-  jpegInfo.mcu_height_real = jpegInfo.mcu_height;
-  jpegInfo.mcu_width_real = jpegInfo.mcu_width;
-  if (jpegInfo.max_v_samp_factor == 2 && jpegInfo.mcu_height_real % 2 == 1) {
-    jpegInfo.mcu_height_real++;
+  jpegInfo.mcu_count_v_real = jpegInfo.mcu_count_v;
+  jpegInfo.mcu_count_h_real = jpegInfo.mcu_count_h;
+  if (jpegInfo.max_v_samp_factor == 2 && jpegInfo.mcu_count_v_real % 2 == 1) {
+    jpegInfo.mcu_count_v_real++;
   }
-  if (jpegInfo.max_h_samp_factor == 2 && jpegInfo.mcu_width_real % 2 == 1) {
-    jpegInfo.mcu_width_real++;
+  if (jpegInfo.max_h_samp_factor == 2 && jpegInfo.mcu_count_h_real % 2 == 1) {
+    jpegInfo.mcu_count_h_real++;
   }
-  jpegInfoDpu.rows_per_tasklet = jpegInfo.mcu_height_real / NR_TASKLETS;
+  jpegInfoDpu.rows_per_tasklet = jpegInfo.mcu_count_v_real / NR_TASKLETS;
 }

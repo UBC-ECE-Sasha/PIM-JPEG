@@ -273,16 +273,16 @@ static int read_SOF_color_component_info(JpegDecompressor *d) {
 }
 
 static void initialize_MCU_height_width() {
-  jpegInfo.mcu_height = (jpegInfo.image_height + 7) / 8;
-  jpegInfo.mcu_width = (jpegInfo.image_width + 7) / 8;
+  jpegInfo.mcu_count_v = (jpegInfo.image_height + 7) / 8;
+  jpegInfo.mcu_count_h = (jpegInfo.image_width + 7) / 8;
   jpegInfo.padding = jpegInfo.image_width % 4;
-  jpegInfo.mcu_height_real = jpegInfo.mcu_height;
-  jpegInfo.mcu_width_real = jpegInfo.mcu_width;
-  if (jpegInfo.max_v_samp_factor == 2 && jpegInfo.mcu_height_real % 2 == 1) {
-    jpegInfo.mcu_height_real++;
+  jpegInfo.mcu_count_v_real = jpegInfo.mcu_count_v;
+  jpegInfo.mcu_count_h_real = jpegInfo.mcu_count_h;
+  if (jpegInfo.max_v_samp_factor == 2 && jpegInfo.mcu_count_v_real % 2 == 1) {
+    jpegInfo.mcu_count_v_real++;
   }
-  if (jpegInfo.max_h_samp_factor == 2 && jpegInfo.mcu_width_real % 2 == 1) {
-    jpegInfo.mcu_width_real++;
+  if (jpegInfo.max_h_samp_factor == 2 && jpegInfo.mcu_count_h_real % 2 == 1) {
+    jpegInfo.mcu_count_h_real++;
   }
 }
 
@@ -899,13 +899,13 @@ static void ycbcr_to_rgb_pixel(short *buffer, short *cbcr, int v, int h) {
 }
 
 static short *decompress_scanline(JpegDecompressor *d) {
-  short *mcus = (short *) malloc((jpegInfo.mcu_height_real * jpegInfo.mcu_width_real) * (3 * 64) * sizeof(short));
+  short *mcus = (short *) malloc((jpegInfo.mcu_count_v_real * jpegInfo.mcu_count_h_real) * (3 * 64) * sizeof(short));
   short previous_dcs[3] = {0};
   uint32_t restart_interval = jpegInfo.restart_interval * jpegInfo.max_h_samp_factor * jpegInfo.max_v_samp_factor;
 
-  for (uint32_t row = 0; row < jpegInfo.mcu_height; row += jpegInfo.max_v_samp_factor) {
-    for (uint32_t col = 0; col < jpegInfo.mcu_width; col += jpegInfo.max_h_samp_factor) {
-      if (restart_interval != 0 && (row * jpegInfo.mcu_width_real + col) % restart_interval == 0) {
+  for (uint32_t row = 0; row < jpegInfo.mcu_count_v; row += jpegInfo.max_v_samp_factor) {
+    for (uint32_t col = 0; col < jpegInfo.mcu_count_h; col += jpegInfo.max_h_samp_factor) {
+      if (restart_interval != 0 && (row * jpegInfo.mcu_count_h_real + col) % restart_interval == 0) {
         previous_dcs[0] = 0;
         previous_dcs[1] = 0;
         previous_dcs[2] = 0;
@@ -923,7 +923,7 @@ static short *decompress_scanline(JpegDecompressor *d) {
           for (uint32_t x = 0; x < jpegInfo.color_components[color_index].h_samp_factor; x++) {
             // MCU to index is (current row + vertical sampling) * total number of MCUs in a row of the JPEG
             // + (current col + horizontal sampling)
-            short *buffer = &mcus[(((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 + color_index) << 6];
+            short *buffer = &mcus[(((row + y) * jpegInfo.mcu_count_h_real + (col + x)) * 3 + color_index) << 6];
 
             // Decode Huffman coded bitstream
             if (decode_mcu(d, color_index, buffer, &previous_dcs[color_index]) != 0) {
@@ -944,10 +944,10 @@ static short *decompress_scanline(JpegDecompressor *d) {
       }
 
       // Convert from YCbCr to RGB
-      short *cbcr = &mcus[((row * jpegInfo.mcu_width_real + col) * 3) << 6];
+      short *cbcr = &mcus[((row * jpegInfo.mcu_count_h_real + col) * 3) << 6];
       for (int y = jpegInfo.max_v_samp_factor - 1; y >= 0; y--) {
         for (int x = jpegInfo.max_h_samp_factor - 1; x >= 0; x--) {
-          short *buffer = &mcus[(((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3) << 6];
+          short *buffer = &mcus[(((row + y) * jpegInfo.mcu_count_h_real + (col + x)) * 3) << 6];
           ycbcr_to_rgb_pixel(buffer, cbcr, y, x);
         }
       }
@@ -1095,8 +1095,8 @@ static void print_jpeg_decompressor(JpegDecompressor *d) {
   printf("Successive approximation low: %d\n\n", jpegInfo.Al);
 
   printf("\n********** BMP **********\n");
-  printf("MCU width: %d\n", jpegInfo.mcu_width);
-  printf("MCU height: %d\n", jpegInfo.mcu_height);
+  printf("MCU width: %d\n", jpegInfo.mcu_count_h);
+  printf("MCU height: %d\n", jpegInfo.mcu_count_v);
   printf("BMP padding: %d\n", jpegInfo.padding);
 }
 #endif
@@ -1126,8 +1126,8 @@ static void init_jpeg_info() {
   jpegInfo.Ah = 0;
   jpegInfo.Al = 0;
 
-  jpegInfo.mcu_width = 0;
-  jpegInfo.mcu_height = 0;
+  jpegInfo.mcu_count_h = 0;
+  jpegInfo.mcu_count_v = 0;
   jpegInfo.padding = 0;
 }
 
@@ -1180,7 +1180,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
   }
 
   // Now write the decoded data out as BMP
-  write_bmp_cpu(filename, jpegInfo.image_width, jpegInfo.image_height, jpegInfo.padding, jpegInfo.mcu_width_real, mcus);
+  write_bmp_cpu(filename, jpegInfo.image_width, jpegInfo.image_height, jpegInfo.padding, jpegInfo.mcu_count_h_real, mcus);
   free(mcus);
 
   return;

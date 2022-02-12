@@ -521,7 +521,6 @@ static int cpu_main(struct jpeg_options *opts) {
     total_data_processed += file_length;
 #endif // STATISTICS
 
-    jpeg_cpu_scale(file_length, filename, buffer);
     TIME_NOW(&end);
     float run_time = TIME_DIFFERENCE(start, end);
 

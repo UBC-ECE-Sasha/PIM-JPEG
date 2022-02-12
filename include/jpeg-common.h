@@ -141,18 +141,19 @@ typedef struct JpegInfo {
   uint8_t Al; // Successive approximation low
 
   // for decoding and writing to BMP
-  uint32_t mcu_height;
-  uint32_t mcu_width;
+  uint32_t mcu_count_v;
+  uint32_t mcu_count_h;
   uint32_t padding;
 
   // used when horizontal or vertical sampling factors are not 1
-  uint32_t mcu_height_real;   // mcu_height + padding, padding must be 0 or 1
-  uint32_t mcu_width_real;    // mcu_width + padding, padding must be 0 or 1
+  uint32_t mcu_count_v_real;   // mcu_count_v + padding, padding must be 0 or 1
+  uint32_t mcu_count_h_real;    // mcu_count_h + padding, padding must be 0 or 1
   uint32_t max_h_samp_factor; // maximum value of horizontal sampling factors amongst all color components
   uint32_t max_v_samp_factor; // maximum value of vertical sampling factors amongst all color components
 } JpegInfo;
 
 void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer);
+void concat_adjust_mcus(JpegDecompressor *d, int row, int col);
 
 /**
  * Helper array for filling in quantization table in zigzag order
