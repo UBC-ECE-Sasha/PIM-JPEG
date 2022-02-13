@@ -14,6 +14,9 @@ from torchvision import transforms
 
 def main():
     args = commandArgs()
+    train_classify(args.evalOnly, args.trainOnly, args.jpegModelOnly, args.dpuModelOnly, args.jpegModelOutput, args.dpuModelOutput, args.epochs, args.patience)
+
+def train_classify(evalOnly, trainOnly, jpegModelOnly, dpuModelOnly, jpegModelOutput, dpuModelOutput, epochs, patience):
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(device)
 
@@ -30,10 +33,6 @@ def main():
     transforms.ToTensor()
     ])
     transform_val = None
-    # model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=False, num_classes=200)
-
-    eval_jpeg = (not args.dpuModelOnly) and (not args.trainOnly)
-    eval_dpu = (not args.jpegModelOnly) and (not args.trainOnly)
 
     training_jpeg = torchvision.datasets.ImageFolder("../tiny-imagenet-200/train",
         is_valid_file=valid_jpeg, transform=transform_train)
@@ -44,24 +43,24 @@ def main():
     val_dpu = ValDataset("../tiny-imagenet-200-dpu/val/images", "../tiny-imagenet-200-dpu/val/val_annotations.txt",
         is_valid_file=valid_dpu, transform=transform_val, class_to_idx=training_dpu.class_to_idx)
 
-    if (not args.dpuModelOnly) and (not args.evalOnly):
+    if (not dpuModelOnly) and (not evalOnly):
         model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=False, num_classes=200)
-        train_model(device, model, training_jpeg, val_jpeg, savepath=args.jpegModelOutput)
-    if (not args.jpegModelOnly) and (not args.evalOnly):
+        train_model(device, model, training_jpeg, val_jpeg, savepath=jpegModelOutput)
+    if (not jpegModelOnly) and (not evalOnly):
         model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=False, num_classes=200)
-        train_model(device, model, training_dpu, val_dpu, savepath=args.dpuModelOutput)
-    if (not args.dpuModelOnly) and (not args.trainOnly):
+        train_model(device, model, training_dpu, val_dpu, savepath=dpuModelOutput)
+    if (not dpuModelOnly) and (not trainOnly):
         model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=False, num_classes=200)
-        model.load_state_dict(torch.load(args.jpegModelOutput))
+        model.load_state_dict(torch.load(jpegModelOutput))
         print("JPEG loss: " + str(validate_model(model, torch.utils.data.DataLoader(val_jpeg),
             device, nn.CrossEntropyLoss())))
         print("DPU loss: " + str(validate_model(model, torch.utils.data.DataLoader(val_dpu),
             device, nn.CrossEntropyLoss())))
 
 
-    if (not args.jpegModelOnly) and (not args.trainOnly):
+    if (not jpegModelOnly) and (not trainOnly):
         model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=False, num_classes=200)
-        model.load_state_dict(torch.load(args.dpuModelOutput))
+        model.load_state_dict(torch.load(dpuModelOutput))
         print("JPEG loss: " + str(validate_model(model, torch.utils.data.DataLoader(val_jpeg),
             device, nn.CrossEntropyLoss())))
         print("DPU loss: " + str(validate_model(model, torch.utils.data.DataLoader(val_dpu),
