@@ -1,7 +1,10 @@
 import os
 import pandas as pd
-from torchvision.io import read_image
+from torchvision.io import read_image, ImageReadMode
+from torchvision import transforms
 from torch.utils.data import Dataset
+import tensorflow as tf
+from PIL import Image
 
 class ValDataset(Dataset):
     """
@@ -28,7 +31,14 @@ class ValDataset(Dataset):
 
     def __getitem__(self, idx):
         img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 0])
-        image = read_image(img_path)
+        # if img_path.lower().split('.')[-1] in ["jpg", "jpeg", "png"]:
+        #     image = read_image(img_path).float()
+        # else:
+        convert = transforms.ToTensor()
+        img_PIL = Image.open(img_path)
+        # print(img_path + " mode: " + img_PIL.mode)
+        image = convert(img_PIL)
+
         label = self.img_labels.iloc[idx, 1]
         if self.transform:
             image = self.transform(image)

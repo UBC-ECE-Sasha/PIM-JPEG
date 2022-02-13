@@ -3,12 +3,18 @@ host-*
 jpeg-dpu-*
 
 *.bmp
+*.png
+!data/*.png
+*.JPEG
+!data/*.JPEG
+
+
 DSCF5148.jpg
 
 *.csv
 !scripts/output/qual.csv
 
-metrics/*.png
+scripts/output/*
 tiny-imagenet-200/*
 tiny-imagenet-200-dpu/*
 

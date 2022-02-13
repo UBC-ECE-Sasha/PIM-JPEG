@@ -24,6 +24,9 @@ def main():
         return
 
     df = pd.read_csv(filename)
+    print(df.head())
+    if args.imgmode != "all":
+        df = df[df["format"]==args.imgmode]
     cols = []
     if not args.SSIMonly:
         cols += ["PSNR"]
@@ -31,8 +34,8 @@ def main():
         cols += ["SSIM"]
         
     hist = df.hist(column=cols)
+    plt.savefig(args.output)
     plt.show()
-    plt.savefig('qual.png')
     
 
 def commandArgs():
@@ -46,6 +49,8 @@ def commandArgs():
         type=str, default="qual.png")
     parser.add_argument("--verbosity", "-v", help="increase output verbosity",
         type=int, default=logging.INFO)
+    parser.add_argument("--imgmode", "-m", help="image modes to consider",
+        type=str, default="all")
 
     return parser.parse_args()
 
