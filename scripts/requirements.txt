@@ -5,5 +5,9 @@ Pillow
 
 # sudo apt install libblas3 liblapack3 liblapack-dev gfortran
 numpy
+
 pandas
 matplotlib
+opencv-python
+torch
+torchvision
