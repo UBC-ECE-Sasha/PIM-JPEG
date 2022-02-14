@@ -14,6 +14,7 @@ from torchvision import transforms
 
 def main():
     args = commandArgs()
+    
     device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
     print(device)
 
@@ -30,10 +31,6 @@ def main():
     transforms.ToTensor()
     ])
     transform_val = None
-    # model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=False, num_classes=200)
-
-    eval_jpeg = (not args.dpuModelOnly) and (not args.trainOnly)
-    eval_dpu = (not args.jpegModelOnly) and (not args.trainOnly)
 
     training_jpeg = torchvision.datasets.ImageFolder("../tiny-imagenet-200/train",
         is_valid_file=valid_jpeg, transform=transform_train)
@@ -58,7 +55,6 @@ def main():
         print("DPU loss: " + str(validate_model(model, torch.utils.data.DataLoader(val_dpu),
             device, nn.CrossEntropyLoss())))
 
-
     if (not args.jpegModelOnly) and (not args.trainOnly):
         model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=False, num_classes=200)
         model.load_state_dict(torch.load(args.dpuModelOutput))
@@ -66,7 +62,6 @@ def main():
             device, nn.CrossEntropyLoss())))
         print("DPU loss: " + str(validate_model(model, torch.utils.data.DataLoader(val_dpu),
             device, nn.CrossEntropyLoss())))
-
 
 def train_model(device, model, training, validation, savepath="resnet.pth", batch_size=4, epochs=100, patience=8):
     trainloader = torch.utils.data.DataLoader(training, batch_size=batch_size,
