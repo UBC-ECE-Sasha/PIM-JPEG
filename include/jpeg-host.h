@@ -19,6 +19,7 @@ enum { PROG_OK = 0, PROG_INVALID_INPUT, PROG_BUFFER_TOO_SMALL, PROG_OUTPUT_ERROR
 enum
 {
 	OPTION_FLAG_HORIZONTAL_FLIP,
+	OPTION_FLAG_TEST_SCALABILITY,			// enable selection of a specific number of DPUs/input files
 };
 
 struct jpeg_options {

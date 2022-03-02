@@ -28,7 +28,7 @@
 
 #define TIME_NOW(_t) (clock_gettime(CLOCK_MONOTONIC, (_t)))
 
-const char options[] = "cdm:r:s:w:f";
+const char options[] = "cdm:r:s:w:fS";
 static uint32_t rank_count, dpu_count;
 static uint32_t dpus_per_rank;
 static char **input_files = NULL;
@@ -565,8 +565,8 @@ int main(int argc, char **argv) {
 #endif // STATISTICS
 
   memset(&opts, 0, sizeof(struct jpeg_options));
-  opts.max_files = -1; // no effective maximum by default
-  opts.max_ranks = -1; // no effective maximum by default
+  opts.max_files = UINT_MAX; // no effective maximum by default
+  opts.max_ranks = UINT_MAX; // no effective maximum by default
   opts.scale_width = 256;
   opts.scale_height = 256;
   opts.flags = 0;
@@ -597,6 +597,11 @@ int main(int argc, char **argv) {
         opts.flags |= (1 << OPTION_FLAG_HORIZONTAL_FLIP);
         break;
 
+		case 'S':
+			opts.flags |= (1 << OPTION_FLAG_TEST_SCALABILITY);
+			printf("testing scalability\n");
+			break;
+
       case 'C':
       case 'D':
       case 'E':
@@ -616,6 +621,13 @@ int main(int argc, char **argv) {
         return -2;
     }
   }
+
+	// if we are doing a scalability test, make sure the maximum number of files is set
+	if (opts.flags & (1 << OPTION_FLAG_TEST_SCALABILITY) && opts.max_files == UINT_MAX)
+	{
+		printf("You must use -S with -m, to set the number of input files to test\n");
+		return -3;
+	}
 
   // at this point, all the rest of the arguments are files to search through
   int remain_arg_count = argc - optind;
@@ -669,6 +681,18 @@ int main(int argc, char **argv) {
     opts.input_file_count = opts.max_files;
     dbg_printf("Limiting input files to %u\n", opts.input_file_count);
   }
+
+	// if we are testing scalability, reuse the last filename as many
+	// times as needed to reach the number of DPUs that are being tested
+	if (opts.flags & (1 << OPTION_FLAG_TEST_SCALABILITY))
+	{
+		char *infile;
+		input_files = realloc(input_files, sizeof(char *) * opts.max_files);
+		infile = input_files[opts.input_file_count - 1];
+		printf("Duplicating input file %s\n", infile);
+		while (opts.input_file_count < opts.max_files)
+			input_files[opts.input_file_count++] = strdup(infile);
+	}
 
   if (use_dpu)
     status = dpu_main(&opts);
