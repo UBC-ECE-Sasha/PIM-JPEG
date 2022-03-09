@@ -173,6 +173,8 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   struct timespec launch_dpu_start, launch_dpu_stop;
   double read_results_time;
   struct timespec read_results_start, read_results_stop;
+  double before_dpu_load_time;
+  struct timespec before_dpu_load_start, before_dpu_load_end;
 #endif
 
 #ifdef STATISTICS
@@ -185,6 +187,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
 
 #ifdef STATISTICS
   TIME_NOW(&input_setup_start);
+  TIME_NOW(&before_dpu_load_start);
 #endif
   // allocate all of the DPUS up-front, then check to see how many we got
   // status = dpu_alloc(DPU_ALLOCATE_ALL, NULL, &dpus);
@@ -193,13 +196,21 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     fprintf(stderr, "Error %i allocating DPUs\n", status);
     return -3;
   }
-  status = dpu_alloc_ranks(opts->num_ranks, NULL, &ranks);
-  if (status != DPU_OK) {
-    fprintf(stderr, "Error %i allocating DPU Ranks\n", status);
-    return -3;
-  }
+#ifdef STATISTICS
+  TIME_NOW(&before_dpu_load_start);
+#endif
+  // status = dpu_alloc_ranks(opts->num_ranks, NULL, &ranks);
+  // if (status != DPU_OK) {
+  //   fprintf(stderr, "Error %i allocating DPU Ranks\n", status);
+  //   return -3;
+  // }
+#ifdef STATISTICS
+  TIME_NOW(&before_dpu_load_end);
+  before_dpu_load_time = TIME_DIFFERENCE(before_dpu_load_start, before_dpu_load_end);
+#endif
 
-  dpu_get_nr_ranks(ranks, &rank_count);
+  // dpu_get_nr_ranks(ranks, &rank_count);
+  rank_count = opts->num_ranks;
   // rank_count=opts->num_ranks; //testing to manually set number of ranks to use since the above call seems to choose
   // #ranks differently
   // dpu_get_nr_dpus(dpus, &dpu_count);
@@ -211,7 +222,9 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   if (rank_count > opts->max_ranks) {
     rank_count = opts->max_ranks;
   }
+
   snprintf(dpu_program_name, 31, "%s-%u", DPU_PROGRAM, NR_TASKLETS);
+
   DPU_ASSERT(dpu_load(dpus, dpu_program_name, NULL));
 
   if (rank_count > 64) {
@@ -295,14 +308,15 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   printf("input setup time  = %0.2f\nlaunch DPU time   = %0.2f\nread results time = %0.2f\n", input_setup_time,
          launch_dpu_time, read_results_time);
   printf("__________Breakdown___________\n");
+  printf("before DPU load time = %0.2f\n", before_dpu_load_time);
 #endif
-  /*  for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
-      write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
-                    dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
+  /* for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
+     write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
+                   dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
 
-      dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
-    }
-  */
+     dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
+   }
+ */
   free(dpu_outputs);
   free(MCU_buffer);
 
