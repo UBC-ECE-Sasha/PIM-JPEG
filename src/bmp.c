@@ -40,7 +40,7 @@ static void initialize_bmp_header(BmpObject *image) {
   image->header.size = image->header.data + image->win_header.length;
 }
 
-static void initialize_bmp_body(BmpObject *image, uint32_t image_padding, uint32_t mcu_width, short *MCU_buffer) {
+static void initialize_bmp_body(BmpObject *image, uint32_t image_padding, uint32_t mcu_width, short *MCU_buffer) { //CHANGING BUFF TO SHORT CAUSES ERRORS
   uint8_t *ptr = (uint8_t *) malloc(image->win_header.height * (image->win_header.width * 3 + image_padding));
   image->data = ptr;
 
@@ -84,12 +84,12 @@ static int write_bmp_to_file(const char *filename, BmpObject *picture) {
 }
 
 static int write_bmp(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
-                     uint32_t mcu_width, short *MCU_buffer, int is_dpu) {
+                     uint32_t mcu_width, char *MCU_buffer, int is_dpu) {
   BmpObject image;
 
   initialize_window_info_header(&image, image_width, image_height);
   initialize_bmp_header(&image);
-  initialize_bmp_body(&image, image_padding, mcu_width, MCU_buffer);
+  initialize_bmp_body(&image, image_padding, mcu_width, (short *)MCU_buffer);
 
   char *filename_dpu = form_bmp_filename(filename, is_dpu);
   printf("Filename: %s\n", filename_dpu);
@@ -102,12 +102,12 @@ static int write_bmp(const char *filename, uint32_t image_width, uint32_t image_
 }
 
 int write_bmp_cpu(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
-                  uint32_t mcu_width, short *MCU_buffer) {
+                  uint32_t mcu_width, char *MCU_buffer) {
   return write_bmp(filename, image_width, image_height, image_padding, mcu_width, MCU_buffer, 0);
 }
 
 int write_bmp_dpu(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
-                  uint32_t mcu_width, short *MCU_buffer) {
+                  uint32_t mcu_width, char *MCU_buffer) {
   return write_bmp(filename, image_width, image_height, image_padding, mcu_width, MCU_buffer, 1);
 }
 

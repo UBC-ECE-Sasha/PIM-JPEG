@@ -898,7 +898,7 @@ static void ycbcr_to_rgb_pixel(short *buffer, short *cbcr, int v, int h) {
   }
 }
 
-static short *decompress_scanline(JpegDecompressor *d) {
+static char *decompress_scanline(JpegDecompressor *d) {
   short *mcus = (short *) malloc((jpegInfo.mcu_height_real * jpegInfo.mcu_width_real) * (3 * 64) * sizeof(short));
   short previous_dcs[3] = {0};
   uint32_t restart_interval = jpegInfo.restart_interval * jpegInfo.max_h_samp_factor * jpegInfo.max_v_samp_factor;
@@ -954,7 +954,7 @@ static short *decompress_scanline(JpegDecompressor *d) {
     }
   }
 
-  return mcus;
+  return (char *)mcus;
 }
 
 /**
@@ -1173,7 +1173,7 @@ void jpeg_cpu_scale(uint64_t file_length, char *filename, char *buffer) {
 #endif
 
   // Process Huffman coded bitstream, perform inverse DCT, and convert YCbCr to RGB
-  short *mcus = decompress_scanline(&decompressor);
+  char *mcus = decompress_scanline(&decompressor);
   if (mcus == NULL || !jpegInfo.valid) {
     fprintf(stderr, "Error: Invalid JPEG\n");
     return;

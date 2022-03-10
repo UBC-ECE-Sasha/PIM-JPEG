@@ -122,7 +122,7 @@ int read_results_dpu_rank(struct dpu_set_t dpu_rank, struct host_rank_context *r
 			continue;
 		}
 
-		rank_ctx->dpus[dpu_id].out_buffer = (short*)malloc(MAX_DECODED_DATA_SIZE);
+		rank_ctx->dpus[dpu_id].out_buffer = (char*)malloc(MAX_DECODED_DATA_SIZE);
 		DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) rank_ctx->dpus[dpu_id].out_buffer));
 
 		if (buf_size > largest_size)
