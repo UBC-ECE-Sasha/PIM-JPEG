@@ -36,10 +36,8 @@ static uint32_t dpus_per_rank;
 static char **input_files = NULL;
 static char dummy_buffer[MAX_INPUT_LENGTH];
 
-#ifdef STATISTICS
 static uint64_t total_data_processed;
 static uint64_t total_dpus_launched;
-#endif // STATISTICS
 
 #ifdef DEBUG
 static char *to_bin(uint64_t i, uint8_t length) {
@@ -166,29 +164,15 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   struct dpu_set_t ranks, dpus, dpu;
   int status;
 
-#ifdef STATISTICS
   double input_setup_time;
   struct timespec input_setup_start, input_setup_stop;
-  double launch_dpu_time;
-  struct timespec launch_dpu_start, launch_dpu_stop;
-  double read_results_time;
-  struct timespec read_results_start, read_results_stop;
-  double before_dpu_load_time;
-  struct timespec before_dpu_load_start, before_dpu_load_end;
-#endif
 
-#ifdef STATISTICS
   // struct timespec start_load, stop_load;
-#endif // STATISTICS
 
 #ifdef BULK_TRANSFER
   printf("Using bulk transfer\n");
 #endif // BULK_TRANSFER
 
-#ifdef STATISTICS
-  TIME_NOW(&input_setup_start);
-  TIME_NOW(&before_dpu_load_start);
-#endif
   // allocate all of the DPUS up-front, then check to see how many we got
   // status = dpu_alloc(DPU_ALLOCATE_ALL, NULL, &dpus);
   status = dpu_alloc(opts->num_dpus, NULL, &dpus);
@@ -196,18 +180,11 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     fprintf(stderr, "Error %i allocating DPUs\n", status);
     return -3;
   }
-#ifdef STATISTICS
-  TIME_NOW(&before_dpu_load_start);
-#endif
   // status = dpu_alloc_ranks(opts->num_ranks, NULL, &ranks);
   // if (status != DPU_OK) {
   //   fprintf(stderr, "Error %i allocating DPU Ranks\n", status);
   //   return -3;
   // }
-#ifdef STATISTICS
-  TIME_NOW(&before_dpu_load_end);
-  before_dpu_load_time = TIME_DIFFERENCE(before_dpu_load_start, before_dpu_load_end);
-#endif
 
   // dpu_get_nr_ranks(ranks, &rank_count);
   rank_count = opts->num_ranks;
@@ -250,6 +227,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
     MCU_buffer[dpu_id] = malloc(sizeof(short) * 87380 * 3 * 64);
   }
 
+  TIME_NOW(&input_setup_start);
   // Let's make the assumption that number of files = number of DPUS to use
   for (uint32_t dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
     int file_index = dpu_id;
@@ -278,14 +256,11 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
       break;
     }
   }
-#ifdef STATISTICS
   TIME_NOW(&input_setup_stop);
   input_setup_time = TIME_DIFFERENCE(input_setup_start, input_setup_stop);
-#endif
+  printf("__________Breakdown___________\n");
+  printf("input setup time  = %0.2f\n", input_setup_time);
 
-#ifdef STATISTICS
-  TIME_NOW(&launch_dpu_start);
-#endif
   uint32_t dpus_to_use = dpu_count;
   dpu_id = 0;
   scale_rank(dpus, dpu, dpu_id, dpu_settings, dpus_to_use);
@@ -295,28 +270,15 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   while (check_for_completed_dpu(dpus) != dpu_count) {
   }
 
-#ifdef STATISTICS
-  TIME_NOW(&launch_dpu_stop);
-  launch_dpu_time = TIME_DIFFERENCE(launch_dpu_start, input_setup_stop);
-
-  TIME_NOW(&read_results_start);
   read_results_dpu_rank(dpus, dpu_outputs, MCU_buffer);
-  TIME_NOW(&read_results_stop);
-  read_results_time = TIME_DIFFERENCE(read_results_start, input_setup_stop);
 
-  printf("__________Breakdown___________\n");
-  printf("input setup time  = %0.2f\nlaunch DPU time   = %0.2f\nread results time = %0.2f\n", input_setup_time,
-         launch_dpu_time, read_results_time);
-  printf("__________Breakdown___________\n");
-  printf("before DPU load time = %0.2f\n", before_dpu_load_time);
-#endif
   /* for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
-     write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
-                   dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
+   write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
+                 dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
 
-     dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
-   }
- */
+   dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
+ }
+*/
   free(dpu_outputs);
   free(MCU_buffer);
 
@@ -355,9 +317,7 @@ static int cpu_main(struct jpeg_options *opts, host_results *results) {
       break;
     }
 
-#ifdef STATISTICS
     total_data_processed += file_length;
-#endif // STATISTICS
 
     jpeg_cpu_scale(file_length, filename, buffer);
     TIME_NOW(&end);
@@ -395,7 +355,6 @@ int main(int argc, char **argv) {
   struct jpeg_options opts;
   host_results results;
 
-#ifdef STATISTICS
   double total_time;
   struct timespec start, stop;
 
@@ -403,7 +362,6 @@ int main(int argc, char **argv) {
     printf("Error getting time\n");
     return -10;
   }
-#endif // STATISTICS
 
   memset(&results, 0, sizeof(host_results));
   memset(&opts, 0, sizeof(struct jpeg_options));
@@ -537,10 +495,8 @@ int main(int argc, char **argv) {
     exit(EXIT_FAILURE);
   }
 
-#ifdef STATISTICS
   clock_gettime(CLOCK_MONOTONIC, &stop);
   total_time = TIME_DIFFERENCE(start, stop);
-  printf("Sequential reader size: %u\n", SEQREAD_CACHE_SIZE);
   printf("Number of DPUs: %u\n", dpu_count);
   printf("Number of ranks: %u\n", rank_count);
   printf("Total line count: %u\n", results.total_line_count);
@@ -553,7 +509,6 @@ int main(int argc, char **argv) {
   printf("Average instructions per byte: %lu\n", results.total_instructions / total_data_processed);
   // printf("Average utilization per DPU: %2.3f%%\n",
   //        (double) total_data_processed * 100 / (double) total_dpus_launched / (double) TOTAL_MRAM);
-#endif // STATISTICS
 
   dbg_printf("Freeing input files\n");
   free(input_files);

@@ -19,8 +19,6 @@ NR_TASKLETS = 8
 # Bulk (dpu_prepare_xfer) is default
 BULK = 1
 
-# Statistics are on by default
-STATS = 1
 SEQREAD_CACHE_SIZE=256
 MAX_FILES_PER_DPU=64
 
@@ -28,9 +26,6 @@ ifeq ($(BULK), 1)
 	CFLAGS+=-DBULK_TRANSFER
 endif
 
-ifeq ($(STATS), 1)
-	CFLAGS+=-DSTATISTICS
-endif
 
 SOURCE = src/jpeg-host.c src/bmp.c src/jpeg-cpu.c
 
