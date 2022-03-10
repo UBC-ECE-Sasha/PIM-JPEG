@@ -259,7 +259,7 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   TIME_NOW(&input_setup_stop);
   input_setup_time = TIME_DIFFERENCE(input_setup_start, input_setup_stop);
   printf("__________Breakdown___________\n");
-  printf("input setup time  = %0.2f\n", input_setup_time);
+  printf("input setup time  = %f\n", input_setup_time);
 
   uint32_t dpus_to_use = dpu_count;
   dpu_id = 0;
