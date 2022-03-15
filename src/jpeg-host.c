@@ -61,40 +61,29 @@ void scale_rank(struct dpu_set_t dpus, struct dpu_set_t dpu, uint32_t dpu_id, dp
   int longest_length = 0;
 
   DPU_FOREACH(dpus, dpu, dpu_id) {
-    DPU_ASSERT(dpu_copy_to(dpu, "input", 0, &dpu_inputs, sizeof(dpu_inputs_t)));
+    DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) &dpu_inputs));
+  }
+  DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_TO_DPU, "input", 0, ALIGN(sizeof(dpu_inputs_t), 8), DPU_XFER_ASYNC));
 
-#ifndef BULK_TRANSFER
-    DPU_ASSERT(
-        dpu_copy_to(dpu, "file_buffer", 0, dpu_settings[dpu_id].buffer, ALIGN(dpu_settings[dpu_id].file_length, 8)));
-#endif
-
-#ifdef BULK_TRANSFER
-
+  DPU_FOREACH(dpus, dpu, dpu_id) {
     DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) dpu_settings[dpu_id].buffer));
     int file_length = dpu_settings[dpu_id].file_length;
     if (file_length > longest_length) {
       longest_length = file_length;
     }
-#endif
   }
-
-#ifdef BULK_TRANSFER
-  // DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_TO_DPU, "file_buffer", 0, ALIGN(longest_length, 8), DPU_XFER_DEFAULT));
   DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_TO_DPU, "file_buffer", 0, ALIGN(longest_length, 8), DPU_XFER_ASYNC));
-  printf("SISESESESE = %d\n", ALIGN(longest_length, 8));
-#endif
 }
 int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, short **MCU_buffer) {
 
   struct dpu_set_t dpu;
   uint32_t dpu_id;
 
-#ifdef BULK_TRANSFER
   DPU_FOREACH(dpus, dpu, dpu_id) {
     DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) &dpu_outputs[dpu_id]));
-    //    DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "output", 0, sizeof(dpu_output_t), DPU_XFER_DEFAULT));
-    DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "output", 0, sizeof(dpu_output_t), DPU_XFER_ASYNC));
   }
+  DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "output", 0, sizeof(dpu_output_t), DPU_XFER_ASYNC));
+  DPU_ASSERT(dpu_sync(dpus));
 
   int largest_pixel_count = 0;
   DPU_FOREACH(dpus, dpu, dpu_id) {
@@ -104,20 +93,10 @@ int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, shor
       largest_pixel_count = pixel_count;
     }
   }
-  // DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "MCU_buffer", 0, sizeof(short) * largest_pixel_count * 3,
-  //                          DPU_XFER_DEFAULT));
   DPU_ASSERT(
       dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "MCU_buffer", 0, sizeof(short) * largest_pixel_count * 3, DPU_XFER_ASYNC));
-#endif // BULK_TRANSFER
 
-#ifndef BULK_TRANSFER
-  DPU_FOREACH(dpus, dpu, dpu_id) {
-    DPU_ASSERT(dpu_copy_from(dpu, "output", 0, &dpu_outputs[dpu_id], sizeof(dpu_output_t)));
-    DPU_ASSERT(dpu_copy_from(dpu, "MCU_buffer", 0, MCU_buffer[dpu_id],
-                             sizeof(short) * ALIGN(dpu_outputs[dpu_id].image_height, 8) *
-                                 ALIGN(dpu_outputs[dpu_id].image_width, 8) * 3));
-  }
-#endif // BULK_TRANSFER
+  DPU_ASSERT(dpu_sync(dpus));
 
   return 0;
 }
@@ -154,12 +133,6 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
 
   double input_setup_time;
   struct timespec input_setup_start, input_setup_stop;
-
-  // struct timespec start_load, stop_load;
-
-#ifdef BULK_TRANSFER
-  printf("Using bulk transfer\n");
-#endif // BULK_TRANSFER
 
   // allocate all of the DPUS up-front, then check to see how many we got
   // status = dpu_alloc(DPU_ALLOCATE_ALL, NULL, &dpus);
@@ -256,14 +229,12 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
 
   read_results_dpu_rank(dpus, dpu_outputs, MCU_buffer);
 
-  DPU_ASSERT(dpu_sync(dpus));
-
-  /*for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
+  for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
     write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
                   dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
 
     dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
-  }*/
+  }
 
   free(dpu_outputs);
   free(MCU_buffer);
