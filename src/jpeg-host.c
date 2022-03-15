@@ -79,7 +79,9 @@ void scale_rank(struct dpu_set_t dpus, struct dpu_set_t dpu, uint32_t dpu_id, dp
   }
 
 #ifdef BULK_TRANSFER
-  DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_TO_DPU, "file_buffer", 0, ALIGN(longest_length, 8), DPU_XFER_DEFAULT));
+  // DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_TO_DPU, "file_buffer", 0, ALIGN(longest_length, 8), DPU_XFER_DEFAULT));
+  DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_TO_DPU, "file_buffer", 0, ALIGN(longest_length, 8), DPU_XFER_ASYNC));
+  printf("SISESESESE = %d\n", ALIGN(longest_length, 8));
 #endif
 }
 int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, short **MCU_buffer) {
@@ -90,7 +92,8 @@ int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, shor
 #ifdef BULK_TRANSFER
   DPU_FOREACH(dpus, dpu, dpu_id) {
     DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) &dpu_outputs[dpu_id]));
-    DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "output", 0, sizeof(dpu_output_t), DPU_XFER_DEFAULT));
+    //    DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "output", 0, sizeof(dpu_output_t), DPU_XFER_DEFAULT));
+    DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "output", 0, sizeof(dpu_output_t), DPU_XFER_ASYNC));
   }
 
   int largest_pixel_count = 0;
@@ -101,9 +104,10 @@ int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, shor
       largest_pixel_count = pixel_count;
     }
   }
-  DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "MCU_buffer", 0, sizeof(short) * largest_pixel_count * 3,
-                           DPU_XFER_DEFAULT));
-
+  // DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "MCU_buffer", 0, sizeof(short) * largest_pixel_count * 3,
+  //                          DPU_XFER_DEFAULT));
+  DPU_ASSERT(
+      dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "MCU_buffer", 0, sizeof(short) * largest_pixel_count * 3, DPU_XFER_ASYNC));
 #endif // BULK_TRANSFER
 
 #ifndef BULK_TRANSFER
@@ -116,22 +120,6 @@ int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, shor
 #endif // BULK_TRANSFER
 
   return 0;
-}
-
-int check_for_completed_dpu(struct dpu_set_t dpus) {
-  struct dpu_set_t dpu;
-  uint32_t dpu_id;
-  uint32_t dpus_done = 0;
-
-  DPU_FOREACH(dpus, dpu, dpu_id) {
-    bool done, fault;
-    dpu_status(dpu, &done, &fault);
-    if (done) {
-      dpus_done++;
-    }
-  }
-
-  return dpus_done;
 }
 
 /**
@@ -266,19 +254,17 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   scale_rank(dpus, dpu, dpu_id, dpu_settings, dpus_to_use);
   DPU_ASSERT(dpu_launch(dpus, DPU_ASYNCHRONOUS));
 
-  uint64_t dpu_status = 0;
-  while (check_for_completed_dpu(dpus) != dpu_count) {
-  }
-
   read_results_dpu_rank(dpus, dpu_outputs, MCU_buffer);
 
-  /* for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
-   write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
-                 dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
+  DPU_ASSERT(dpu_sync(dpus));
 
-   dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
- }
-*/
+  /*for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
+    write_bmp_dpu(dpu_settings[dpu_id].filename, dpu_outputs[dpu_id].image_width, dpu_outputs[dpu_id].image_height,
+                  dpu_outputs[dpu_id].padding, dpu_outputs[dpu_id].mcu_width_real, MCU_buffer[dpu_id]);
+
+    dpu_output_t this_dpu_output = dpu_outputs[dpu_id];
+  }*/
+
   free(dpu_outputs);
   free(MCU_buffer);
 
