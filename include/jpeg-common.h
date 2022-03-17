@@ -113,6 +113,7 @@ typedef struct JpegDecompressor {
 
 typedef struct JpegInfo {
   uint8_t valid;             // indicates whether file is actually a JPEG file
+  uint8_t greyScale;
   uint32_t image_data_start; // index where image data begins in SOS
   uint32_t length;           // total length of JPEG
   uint32_t size_per_tasklet; // number of bytes to decode per tasklet
