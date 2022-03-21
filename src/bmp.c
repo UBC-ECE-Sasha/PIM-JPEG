@@ -40,7 +40,7 @@ static void initialize_bmp_header(BmpObject *image) {
   image->header.size = image->header.data + image->win_header.length;
 }
 
-static void initialize_bmp_body(BmpObject *image, uint32_t image_padding, uint32_t mcu_width, short *MCU_buffer) { //CHANGING BUFF TO SHORT CAUSES ERRORS
+static void initialize_bmp_body(BmpObject *image, uint32_t image_padding, uint32_t mcu_width, char *MCU_buffer) {
   uint8_t *ptr = (uint8_t *) malloc(image->win_header.height * (image->win_header.width * 3 + image_padding));
   image->data = ptr;
 
@@ -53,9 +53,9 @@ static void initialize_bmp_body(BmpObject *image, uint32_t image_padding, uint32
       uint32_t pixel_column = x % 8;
       uint32_t mcu_index = mcu_row * mcu_width + mcu_column;
       uint32_t pixel_index = pixel_row * 8 + pixel_column;
-      ptr[0] = MCU_buffer[(mcu_index * 3 + 2) * 64 + pixel_index];
-      ptr[1] = MCU_buffer[(mcu_index * 3 + 1) * 64 + pixel_index];
-      ptr[2] = MCU_buffer[(mcu_index * 3 + 0) * 64 + pixel_index];
+      ptr[0] = MCU_buffer[((mcu_index * 3 + 2) * 64 + pixel_index)*2];
+      ptr[1] = MCU_buffer[((mcu_index * 3 + 1) * 64 + pixel_index)*2];
+      ptr[2] = MCU_buffer[((mcu_index * 3 + 0) * 64 + pixel_index)*2];
       ptr += 3;
     }
 
@@ -89,7 +89,7 @@ static int write_bmp(const char *filename, uint32_t image_width, uint32_t image_
 
   initialize_window_info_header(&image, image_width, image_height);
   initialize_bmp_header(&image);
-  initialize_bmp_body(&image, image_padding, mcu_width, (short *)MCU_buffer);
+  initialize_bmp_body(&image, image_padding, mcu_width, MCU_buffer);
 
   char *filename_dpu = form_bmp_filename(filename, is_dpu);
   printf("Filename: %s\n", filename_dpu);
