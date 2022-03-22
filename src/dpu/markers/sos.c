@@ -42,12 +42,24 @@ int process_SOS(JpegDecompressor *d) {
 
 static int read_SOS_color_component_info(JpegDecompressor *d) {
   uint8_t component_id = read_byte(d); // Csj
-  if (component_id == 0 || component_id > 3) {
+  ColorComponentInfo *component;
+  if (component_id == 0 || jpegInfo.greyScale == 1) 
+  {
+    // Black and white picture with gray scale
+    jpegInfo.greyScale = 1;
+    component = &jpegInfo.color_components[component_id];
+  }
+  else if (component_id <= 3)
+  {  
+    component = &jpegInfo.color_components[component_id - 1];
+  }
+  else 
+  {
+    jpegInfo.valid = 0;
     printf("Error: Invalid SOS - component ID: %d\n", component_id);
     return JPEG_INVALID_ERROR_CODE;
   }
 
-  ColorComponentInfo *component = &jpegInfo.color_components[component_id - 1];
   uint8_t tdta = read_byte(d);
   component->dc_huffman_table_id = (tdta >> 4) & 0x0F; // Tdj
   component->ac_huffman_table_id = tdta & 0x0F;        // Taj
