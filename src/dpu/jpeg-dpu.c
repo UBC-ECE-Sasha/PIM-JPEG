@@ -8,7 +8,7 @@
 
 __host dpu_inputs_t input;
 __host dpu_output_t output;
-extern short MCU_buffer[NR_TASKLETS][MAX_DECODED_DATA_SIZE / 2 / NR_TASKLETS];
+extern short MCU_buffer[MAX_DECODED_DATA_SIZE / 2];
 
 JpegInfo jpegInfo;
 JpegInfoDpu jpegInfoDpu;
@@ -19,6 +19,7 @@ BARRIER_INIT(crop_barrier, NR_TASKLETS);
 BARRIER_INIT(prep0_barrier, NR_TASKLETS);
 BARRIER_INIT(prep1_barrier, NR_TASKLETS);
 BARRIER_INIT(prep2_barrier, NR_TASKLETS);
+BARRIER_INIT(sync_barrier, NR_TASKLETS);
 
 #if DEBUG
 static void print_jpeg_decompressor() {
@@ -225,6 +226,8 @@ int main() {
       return error;
     }
   }
+
+  dbg_printf("JPEG with %d components\n", jpegInfo.num_color_components);
 
 	if (output.length > sizeof(MCU_buffer))
 	{
