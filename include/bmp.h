@@ -37,6 +37,6 @@ int write_bmp_cpu(const char *filename, uint32_t image_width, uint32_t image_hei
                   uint32_t mcu_width, short *MCU_buffer);
 
 int write_bmp_dpu(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
-                  uint32_t mcu_width, short *MCU_buffer);
+                  uint32_t mcu_width, char *MCU_buffer);
 
 #endif // _BMP__H
