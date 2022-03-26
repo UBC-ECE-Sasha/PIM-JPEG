@@ -4,8 +4,8 @@
 
 #include "dpu-jpeg.h"
 
-__mram_noinit short MCU_buffer[NR_TASKLETS][MEGABYTE(15) / NR_TASKLETS]; // 32MB
-__mram_noinit char MCU_out_buffer[MEGABYTE(15)]; // 16MB
+__mram_noinit short MCU_buffer[NR_TASKLETS][MEGABYTE(15) / NR_TASKLETS]; // 30MB
+__mram_noinit char MCU_out_buffer[MEGABYTE(15)]; // 15MB
 
 #define PREWRITE_SIZE 768
 __dma_aligned short MCU_buffer_cache[NR_TASKLETS][PREWRITE_SIZE];
