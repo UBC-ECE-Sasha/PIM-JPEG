@@ -4,10 +4,12 @@
 
 #include "dpu-jpeg.h"
 
-__mram_noinit short MCU_buffer[NR_TASKLETS][16776960 / NR_TASKLETS];
+__mram_noinit short MCU_buffer[NR_TASKLETS][MEGABYTE(15) / NR_TASKLETS]; // 30MB
+__mram_noinit char MCU_out_buffer[MEGABYTE(15)]; // 15MB
 
 #define PREWRITE_SIZE 768
 __dma_aligned short MCU_buffer_cache[NR_TASKLETS][PREWRITE_SIZE];
+__dma_aligned char MCU_out_cache[NR_TASKLETS][PREWRITE_SIZE];
 #define MCU_READ_WRITE_SIZE0 128
 #define MCU_READ_WRITE_SIZE1 384
 
@@ -343,7 +345,7 @@ void inverse_dct_convert(JpegDecompressor *d) {
       for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
         for (int y = 0; y < jpegInfo.color_components[color_index].v_samp_factor; y++) {
           for (int x = 0; x < jpegInfo.color_components[color_index].h_samp_factor; x++) {
-            int mcu_index = (((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3 + color_index) << 6;
+            int mcu_index = (((row + y) * jpegInfo.mcu_width_real + (col + x)) * jpegInfo.num_color_components + color_index) << 6;
             int cache_index = ((y << 8) + (y << 7)) + ((x << 7) + (x << 6)) + (color_index << 6);
             mram_read(&MCU_buffer[0][mcu_index], &MCU_buffer_cache[d->tasklet_id][cache_index], MCU_READ_WRITE_SIZE0);
 
@@ -363,7 +365,8 @@ void inverse_dct_convert(JpegDecompressor *d) {
 
           ycbcr_to_rgb_pixel(d, cache_index, y, x);
 
-          mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE1);
+          // After this all the values are between 0 and 255
+          mram_write(&MCU_out_cache[d->tasklet_id][cache_index], &MCU_out_buffer[mcu_index], MCU_READ_WRITE_SIZE1 >> 1);
         }
       }
     }
@@ -521,7 +524,8 @@ static void ycbcr_to_rgb_pixel(JpegDecompressor *d, int cache_index, int v, int 
   int max_v = jpegInfo.max_v_samp_factor;
   int max_h = jpegInfo.max_h_samp_factor;
 
-  // Iterating from bottom right to top left because otherwise the pixel data will get overwritten
+  // Iterating from bottom right to top left because otherwise the pixel data will get overwritten 
+  // due to the horizantal and vertical sampling factors
   for (int y = 7; y >= 0; y--) {
     for (int x = 7; x >= 0; x--) {
       int pixel = cache_index + (y << 3) + x;
@@ -552,9 +556,9 @@ static void ycbcr_to_rgb_pixel(JpegDecompressor *d, int cache_index, int v, int 
       if (b > 255)
         b = 255;
 
-      MCU_buffer_cache[d->tasklet_id][pixel] = r;
-      MCU_buffer_cache[d->tasklet_id][64 + pixel] = g;
-      MCU_buffer_cache[d->tasklet_id][128 + pixel] = b;
+      MCU_out_cache[d->tasklet_id][pixel] = (char) r;
+      MCU_out_cache[d->tasklet_id][64 + pixel] = (char) g;
+      MCU_out_cache[d->tasklet_id][128 + pixel] = (char) b;
     }
   }
 }

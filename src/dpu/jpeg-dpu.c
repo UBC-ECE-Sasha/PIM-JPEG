@@ -246,14 +246,6 @@ int main() {
       horizontal_flip(&decompressor);
     }
   */
-  barrier_wait(&prep1_barrier);
-  find_sum_rgb(&decompressor);
-
-  barrier_wait(&prep2_barrier);
-
-  for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
-    output.sum_rgb[color_index] = jpegInfoDpu.sum_rgb[color_index];
-  }
 
   return 0;
 }

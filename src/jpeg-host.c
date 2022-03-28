@@ -74,7 +74,7 @@ void scale_rank(struct dpu_set_t dpus, struct dpu_set_t dpu, uint32_t dpu_id, dp
   }
   DPU_ASSERT(dpu_push_xfer(dpus, DPU_XFER_TO_DPU, "file_buffer", 0, ALIGN(longest_length, 8), DPU_XFER_ASYNC));
 }
-int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, short **MCU_buffer) {
+int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, char **MCU_buffer) {
 
   struct dpu_set_t dpu;
   uint32_t dpu_id;
@@ -94,7 +94,7 @@ int read_results_dpu_rank(struct dpu_set_t dpus, dpu_output_t *dpu_outputs, shor
     }
   }
   DPU_ASSERT(
-      dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "MCU_buffer", 0, sizeof(short) * largest_pixel_count * 3, DPU_XFER_ASYNC));
+      dpu_push_xfer(dpus, DPU_XFER_FROM_DPU, "MCU_out_buffer", 0, sizeof(char) * largest_pixel_count * 3, DPU_XFER_ASYNC));
 
   DPU_ASSERT(dpu_sync(dpus));
 
@@ -183,9 +183,9 @@ static int dpu_main(struct jpeg_options *opts, host_results *results) {
   }
 
   dpu_output_t *dpu_outputs = calloc(dpu_count, sizeof(dpu_output_t));
-  short **MCU_buffer = malloc(sizeof(short *) * dpu_count);
+  char **MCU_buffer = malloc(sizeof(char *) * dpu_count);
   for (dpu_id = 0; dpu_id < dpu_count; dpu_id++) {
-    MCU_buffer[dpu_id] = malloc(sizeof(short) * 87380 * 3 * 64);
+    MCU_buffer[dpu_id] = malloc(sizeof(char) * 87380 * 3 * 64);
   }
 
   TIME_NOW(&input_setup_start);
