@@ -1,6 +1,6 @@
 IDIR = include
 CC = gcc
-CFLAGS = --std=c99 -O3 -g -Wall -Wextra -I $(IDIR) -I ./PIM-common/common/include -I ./PIM-common/host/include -DSEQREAD_CACHE_SIZE=$(SEQREAD_CACHE_SIZE)
+CFLAGS = --std=c99 -O3 -g -Wall -Wextra -I $(IDIR) -I ./PIM-common/common/include -I ./PIM-common/host/include
 DPU_OPTS = `dpu-pkg-config --cflags --libs dpu`
 
 # define DEBUG in the source if we are debugging
@@ -14,9 +14,6 @@ endif
 
 # Collect statistics about various operations
 STATS ?= 0
-
-# Size of the sequential reader
-SEQREAD_CACHE_SIZE ?= 256
 
 # How many files can be assigned to a single DPU
 MAX_FILES_PER_DPU ?= 1
