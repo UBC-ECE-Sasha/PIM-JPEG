@@ -5,8 +5,8 @@
 # Measure scalability across a given number of files (=DPUs)
 
 prog=host-1
-input_file=data/imagenet/n02116738_124.JPEG
-max_files=65536
+input_file=data/cat1.jpg
+max_files=16384
 output=scalability.log
 
 make clean
@@ -16,9 +16,11 @@ if [[ ! -f $prog ]]; then
 	exit -1
 fi
 
+flag_dpu="-d"
+
 echo $(date --iso-8601) > $output
-for (( file_count=1; file_count < $max_files; file_count = $file_count * 2 )); do
-	cmd="./host-1 -S -m $file_count $input_file"
+for (( file_count=1; file_count <= $max_files; file_count = $file_count * 2 )); do
+	cmd="./host-1 ${flag_dpu} -S -m $file_count $input_file"
 	echo $cmd
 	$cmd >> $output
 done
