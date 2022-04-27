@@ -92,7 +92,6 @@ static int write_bmp(const char *filename, uint32_t image_width, uint32_t image_
   initialize_bmp_body(&image, image_padding, mcu_width, MCU_buffer);
 
   char *filename_dpu = form_bmp_filename(filename, is_dpu);
-  printf("Filename: %s\n", filename_dpu);
 
   int result = write_bmp_to_file(filename_dpu, &image);
   free(image.data);

@@ -707,7 +707,6 @@ int main(int argc, char **argv) {
 #ifdef STATISTICS
   clock_gettime(CLOCK_MONOTONIC, &stop);
   total_time = TIME_DIFFERENCE(start, stop);
-  printf("Sequential reader size: %u\n", SEQREAD_CACHE_SIZE);
   printf("Number of DPUs: %u\n", dpu_count);
   printf("Number of ranks: %u\n", rank_count);
   printf("Total data processed: %lu\n", total_data_processed);
