@@ -40,7 +40,7 @@ static void initialize_bmp_header(BmpObject *image) {
   image->header.size = image->header.data + image->win_header.length;
 }
 
-static void initialize_bmp_body(BmpObject *image, uint32_t image_padding, uint32_t mcu_width, short *MCU_buffer) {
+static void initialize_bmp_body(BmpObject *image, uint32_t image_padding, uint32_t mcu_width, char *MCU_buffer) {
   uint8_t *ptr = (uint8_t *) malloc(image->win_header.height * (image->win_header.width * 3 + image_padding));
   image->data = ptr;
 
@@ -53,9 +53,9 @@ static void initialize_bmp_body(BmpObject *image, uint32_t image_padding, uint32
       uint32_t pixel_column = x % 8;
       uint32_t mcu_index = mcu_row * mcu_width + mcu_column;
       uint32_t pixel_index = pixel_row * 8 + pixel_column;
-      ptr[0] = MCU_buffer[(mcu_index * 3 + 2) * 64 + pixel_index];
-      ptr[1] = MCU_buffer[(mcu_index * 3 + 1) * 64 + pixel_index];
-      ptr[2] = MCU_buffer[(mcu_index * 3 + 0) * 64 + pixel_index];
+      ptr[0] = MCU_buffer[((mcu_index * 3 + 2) * 64 + pixel_index)*2];
+      ptr[1] = MCU_buffer[((mcu_index * 3 + 1) * 64 + pixel_index)*2];
+      ptr[2] = MCU_buffer[((mcu_index * 3 + 0) * 64 + pixel_index)*2];
       ptr += 3;
     }
 
@@ -84,7 +84,7 @@ static int write_bmp_to_file(const char *filename, BmpObject *picture) {
 }
 
 static int write_bmp(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
-                     uint32_t mcu_width, short *MCU_buffer, int is_dpu) {
+                     uint32_t mcu_width, char *MCU_buffer, int is_dpu) {
   BmpObject image;
 
   initialize_window_info_header(&image, image_width, image_height);
@@ -101,12 +101,12 @@ static int write_bmp(const char *filename, uint32_t image_width, uint32_t image_
 }
 
 int write_bmp_cpu(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
-                  uint32_t mcu_width, short *MCU_buffer) {
+                  uint32_t mcu_width, char *MCU_buffer) {
   return write_bmp(filename, image_width, image_height, image_padding, mcu_width, MCU_buffer, 0);
 }
 
 int write_bmp_dpu(const char *filename, uint32_t image_width, uint32_t image_height, uint32_t image_padding,
-                  uint32_t mcu_width, short *MCU_buffer) {
+                  uint32_t mcu_width, char *MCU_buffer) {
   return write_bmp(filename, image_width, image_height, image_padding, mcu_width, MCU_buffer, 1);
 }
 

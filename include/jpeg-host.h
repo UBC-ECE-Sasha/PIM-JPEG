@@ -78,7 +78,7 @@ typedef struct host_dpu_descriptor {
   uint32_t perf; // value from the DPU's performance counter
   char *in_buffer;  // concatenated buffer for this DPU
   uint32_t in_length; // total length of in_buffer (in bytes)
-  short *out_buffer; // decompressed image data
+  char *out_buffer; // decompressed image data
   uint32_t file_count;	// how many files are assigned to this DPU
   dpu_output_t img[MAX_FILES_PER_DPU];  // decompressed image metadata
   char *filename[MAX_FILES_PER_DPU];
