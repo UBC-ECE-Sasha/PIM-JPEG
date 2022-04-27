@@ -2,9 +2,12 @@
 #include <defs.h>
 #include <mram.h>
 #include <stdio.h>
+#include <string.h>
 
+#include <perfcounter.h>
 #include "dpu-jpeg.h"
-#include "jpeg-host.h"
+
+#define CLOCK_CYCLES_PER_MS (800000 / 3) /* 800MHz / 3 */
 
 __host dpu_inputs_t input;
 __host dpu_output_t output;
@@ -15,10 +18,7 @@ JpegInfoDpu jpegInfoDpu;
 
 BARRIER_INIT(init_barrier, NR_TASKLETS);
 BARRIER_INIT(idct_barrier, NR_TASKLETS);
-BARRIER_INIT(crop_barrier, NR_TASKLETS);
 BARRIER_INIT(prep0_barrier, NR_TASKLETS);
-BARRIER_INIT(prep1_barrier, NR_TASKLETS);
-BARRIER_INIT(prep2_barrier, NR_TASKLETS);
 
 #if DEBUG
 static void print_jpeg_decompressor() {
@@ -211,20 +211,33 @@ static void crop_and_scale(JpegDecompressor *d) {
   output.mcu_width_real = jpegInfo.mcu_width_real;
 }
 
-int main() {
-  JpegDecompressor decompressor;
-  jpegInfo.length = decompressor.length = input.file_length;
-  decompressor.tasklet_id = me();
+int main()
+{
+	JpegDecompressor decompressor;
+
+#ifdef STATISTICS
+	// start the performance counter
+	perfcounter_config(COUNT_CYCLES, true);
+#endif // STATISTICS
+
+	memset(&decompressor, 0, sizeof(JpegDecompressor));
+	jpegInfo.length = decompressor.length = input.file_length;
+	decompressor.tasklet_id = me();
 
 	dbg_printf("[:%u] Got input file length: %u\n", decompressor.tasklet_id, input.file_length);
 
-  if (decompressor.tasklet_id == 0) {
+	if (decompressor.tasklet_id == 0)
+	{
 		dbg_printf("[:%u] reading markers\n", decompressor.tasklet_id);
-    int error = read_all_markers(&decompressor);
-    if (error) {
-      return error;
-    }
-  }
+		int error = read_all_markers(&decompressor);
+#ifdef STATISTICS
+		output.cycles_read_markers = perfcounter_get();
+		printf("read markers in %u cycles\n", output.cycles_read_markers);
+#endif // STATISTICS
+	
+		if (error)
+			return error;
+	}
 
 	if (output.length > sizeof(MCU_buffer))
 	{
@@ -245,20 +258,22 @@ int main() {
 
   // All tasklets should wait until tasklet 0 has finished adjusting the DC coefficients
   barrier_wait(&idct_barrier);
+
+#ifdef STATISTICS
+		output.cycles_decode_total = perfcounter_get();
+#endif // STATISTICS
+
   inverse_dct_convert(&decompressor);
 
   barrier_wait(&prep0_barrier);
-	if (input.flags & 1 << OPTION_FLAG_HORIZONTAL_FLIP)
-		horizontal_flip(&decompressor);
 
-  barrier_wait(&prep1_barrier);
-  find_sum_rgb(&decompressor);
+#ifdef STATISTICS
+	if (decompressor.tasklet_id == 0)
+	{
+		output.cycles_convert_total = perfcounter_get() - output.cycles_decode_total;
+		output.cycles_total = perfcounter_get();
+	}
+#endif // STATISTICS
 
-  barrier_wait(&prep2_barrier);
-
-  for (int color_index = 0; color_index < jpegInfo.num_color_components; color_index++) {
-    output.sum_rgb[color_index] = jpegInfoDpu.sum_rgb[color_index];
-  }
-
-  return 0;
+	return 0;
 }

@@ -12,3 +12,7 @@ This program currently performs the following using CPU only:
 The implementation is heavily inspired by the following resources:
 * CCITT specs: https://www.w3.org/Graphics/JPEG/itu-t81.pdf
 * Everything You Need to Know About JPEG Youtube series: https://www.youtube.com/watch?v=CPT4FSkFUgs&list=PLpsTn9TA_Q8VMDyOPrDKmSJYt1DLgDZU4
+
+## Make options
+STATS=1
+Turn on statistics for measuring time of each stage

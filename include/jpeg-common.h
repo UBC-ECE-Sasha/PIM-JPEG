@@ -1,12 +1,23 @@
 #ifndef _JPEG_CPU_H
 #define _JPEG_CPU_H
 
+/* Common definitions shared by the CPU and DPU */
+
 #include <stdint.h>
+
+#define MAX_INPUT_LENGTH MEGABYTE(16)
+#define MAX_DECODED_DATA_SIZE MEGABYTE(32)
 
 #define MAX_HUFFMAN_TABLES 2
 
 #define JPEG_VALID 0
 #define JPEG_INVALID_ERROR_CODE 1
+
+enum
+{
+	OPTION_FLAG_HORIZONTAL_FLIP,
+	OPTION_FLAG_TEST_SCALABILITY,			// enable selection of a specific number of DPUs/input files
+};
 
 /**
  * JPEG Markers: CCITT Rec T.81 page 32
@@ -160,5 +171,34 @@ static const uint8_t ZIGZAG_ORDER[] = {0,  1,  8,  16, 9,  2,  3,  10, 17, 24, 3
                                        12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6,  7,  14, 21, 28,
                                        35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
                                        58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63};
+
+typedef struct dpu_inputs_t
+{
+	uint32_t file_length;
+	uint32_t scale_width;
+	uint32_t flags;					// see OPTION_FLAG_
+	uint32_t padding;
+} dpu_inputs_t __attribute__((aligned(8)));
+
+typedef struct dpu_output_t
+{
+	uint16_t width;
+	uint16_t height;
+	uint32_t padding;
+	uint32_t mcu_width_real;
+	uint32_t length;		// total length of data buffer, in bytes
+#ifdef STATISTICS
+	uint32_t mcu_decode_tries; // how many times decode_mcu was called (including failed attempts)
+	uint32_t cycles_read_markers; // how many DPU cycles to read JPEG markers from the header
+	uint32_t cycles_decode_total; // total time for decoding & dequantizing all MCUs
+	uint32_t cycles_mcu_decode;	// time spent only on huffman decoding
+	uint32_t cycles_mcu_dequant;	// time spent only on dequantization
+	uint32_t cycles_convert_total; // idct + color conversion
+	uint32_t cycles_idct;			// IDCT time
+	uint32_t cycles_cc;				// color conversion
+	uint32_t cycles_dc_adj;
+	uint32_t cycles_total;
+#endif // STATISTICS
+} dpu_output_t __attribute__((aligned(8)));
 
 #endif // _JPEG_CPU_H

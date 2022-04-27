@@ -27,6 +27,7 @@
 #define DPU_ID_DPU(_x) ((_x) &0xFF)
 
 #define TIME_NOW(_t) (clock_gettime(CLOCK_MONOTONIC, (_t)))
+#define CYCLES_PER_NS (800.0 / 3 * 1000 * 1000)
 
 const char options[] = "cdm:r:s:w:fS";
 static uint32_t rank_count, dpu_count;
@@ -36,6 +37,7 @@ static char **input_files = NULL;
 #ifdef STATISTICS
 static uint64_t total_data_processed;
 static uint64_t total_dpus_launched;
+static struct timespec program_start;
 #endif // STATISTICS
 
 #ifdef DEBUG
@@ -57,8 +59,15 @@ void scale_rank(struct dpu_set_t dpu_rank, host_rank_context *desc, struct jpeg_
 	uint32_t dpu_id = 0; // the id of the DPU inside the rank (0-63)
 	dpu_inputs_t dpu_inputs[64];
 	struct host_dpu_descriptor *input = desc->dpus;
+#ifdef STATISTICS
+	struct timespec copy_start, copy_stop;
+#endif // STATISTICS
 
 	dbg_printf("Using %u DPUs\n", desc->dpu_count);
+
+#ifdef STATISTICS
+    TIME_NOW(&copy_start);
+#endif // STATISTICS
 
 	// copy the input metadata to the DPUs
 	DPU_FOREACH(dpu_rank, dpu, dpu_id)
@@ -84,20 +93,28 @@ void scale_rank(struct dpu_set_t dpu_rank, host_rank_context *desc, struct jpeg_
 	}
 	DPU_ASSERT(dpu_push_xfer(dpu_rank, DPU_XFER_TO_DPU, "file_buffer", 0, ALIGN(longest_length, 8), DPU_XFER_DEFAULT));
 
+#ifdef STATISTICS
+	TIME_NOW(&copy_stop);
+	printf("%2.5f - Data copied from host to DPUs in %2.5f s\n",
+		TIME_DIFFERENCE(program_start, copy_stop),
+		TIME_DIFFERENCE(copy_start, copy_stop));
+#endif // STATISTICS
+
 	// launch the rank as soon as the data is copied
 	DPU_ASSERT(dpu_launch(dpu_rank, DPU_ASYNCHRONOUS));
 }
 
-int read_results_dpu_rank(struct dpu_set_t dpu_rank, struct host_rank_context *rank_ctx)
+int read_results_dpu_rank(struct dpu_set_t dpu_rank, struct host_rank_context *rank_ctx, uint32_t rank_id)
 {
 	struct dpu_set_t dpu;
 	uint8_t dpu_id;
 
 #ifdef STATISTICS
-	struct timespec stop;
-	clock_gettime(CLOCK_MONOTONIC, &stop);
-	double rank_time = TIME_DIFFERENCE(rank_ctx->start_rank, stop);
-	printf("Rank processed in %2.2f s\n", rank_time);
+	struct timespec results_start;
+	clock_gettime(CLOCK_MONOTONIC, &results_start);
+	printf("%2.5f - rank %u done in %2.5f s\n",
+		TIME_DIFFERENCE(program_start, results_start), rank_id,
+		TIME_DIFFERENCE(rank_ctx->start_rank, results_start));
 #endif // STATISTICS
 
 	// get image metadata
@@ -106,6 +123,34 @@ int read_results_dpu_rank(struct dpu_set_t dpu_rank, struct host_rank_context *r
 		DPU_ASSERT(dpu_prepare_xfer(dpu, (void *) &rank_ctx->dpus[dpu_id].img));
 	}
 	DPU_ASSERT(dpu_push_xfer(dpu_rank, DPU_XFER_FROM_DPU, "output", 0, sizeof(dpu_output_t), DPU_XFER_DEFAULT));
+
+#ifdef STATISTICS
+	// print out measurements made by each DPU
+	DPU_FOREACH(dpu_rank, dpu, dpu_id)
+	{
+		if (dpu_id < rank_ctx->dpu_count)
+		{
+		dpu_output_t *output = rank_ctx->dpus[dpu_id].img;
+		printf("[%u] called decode_mcu %u times\n", dpu_id, output->mcu_decode_tries);
+		printf("[%u] read metadata in %2.5f s (%u cycles)\n", dpu_id,
+			(double)output->cycles_read_markers / CYCLES_PER_NS, output->cycles_read_markers);
+		printf("[%u] huffman decoding took %2.5f s (%u cycles)\n", dpu_id,
+			(double)output->cycles_mcu_decode / CYCLES_PER_NS, output->cycles_mcu_decode);
+		printf("[%u] dequantization took %2.5f s (%u cycles)\n", dpu_id,
+			(double)output->cycles_mcu_dequant / CYCLES_PER_NS, output->cycles_mcu_dequant);
+		printf("[%u] decoded mcus+dequantized in %2.5f s (%u cycles)\n", dpu_id,
+			(double)output->cycles_decode_total / CYCLES_PER_NS, output->cycles_decode_total);
+		printf("[%u] idct in %2.5f (%u cycles)\n", dpu_id,
+			(double)output->cycles_idct / CYCLES_PER_NS, output->cycles_idct);
+		printf("[%u] color conversion in %2.5f (%u cycles)\n", dpu_id,
+			(double)output->cycles_cc / CYCLES_PER_NS, output->cycles_cc);
+		printf("[%u] performed idct+color space in %2.5f (%u cycles)\n", dpu_id,
+			(double)output->cycles_convert_total / CYCLES_PER_NS, output->cycles_convert_total);
+		printf("[%u] total %2.5f (%u cycles)\n", dpu_id,
+			(double)output->cycles_total / CYCLES_PER_NS, output->cycles_total);
+		}
+	}
+#endif // STATISTICS
 
 	// get image data
 	uint64_t largest_size = 0;
@@ -141,7 +186,7 @@ int read_results_dpu_rank(struct dpu_set_t dpu_rank, struct host_rank_context *r
 		if (dpu_id >= rank_ctx->dpu_count)
 			break;
 
-#ifdef DEBUG_DPU
+#if defined DEBUG_DPU
 		// get any DPU debug messages
 		dpu_error_t err = dpu_log_read(dpu, stdout);
 		if (err != DPU_OK)
@@ -151,6 +196,12 @@ int read_results_dpu_rank(struct dpu_set_t dpu_rank, struct host_rank_context *r
 		}
 #endif // DEBUG_DPU
 	}
+
+#ifdef STATISTICS
+	struct timespec data_stop;
+	clock_gettime(CLOCK_MONOTONIC, &data_stop);
+	printf("%2.5f - Data copied from DPU to host\n", TIME_DIFFERENCE(program_start, data_stop));
+#endif // STATISTICS
 
 	return 0;
 }
@@ -211,7 +262,7 @@ int check_for_completed_rank(struct dpu_set_t dpus, uint64_t* rank_status, struc
 			{
 				*rank_status &= ~((uint64_t)1<<rank_id);
 				dbg_printf("Reading results from rank %u status %s\n", rank_id, to_bin(*rank_status, rank_count));
-				read_results_dpu_rank(dpu_rank, rank_ctx);
+				read_results_dpu_rank(dpu_rank, rank_ctx, rank_id);
 
 				// aggregate statistics
 				for (dpu_id=0; dpu_id < rank_ctx->dpu_count; dpu_id++)
@@ -226,8 +277,17 @@ int check_for_completed_rank(struct dpu_set_t dpus, uint64_t* rank_status, struc
 						if (desc->img[file].length)
 						{
 							// write it to a file
+
+#ifdef STATISTICS
+							struct timespec start_bmp, stop_bmp;
+							TIME_NOW(&start_bmp);
+#endif // STATISTICS
 							dpu_output_t *img = &desc->img[file];
 							write_bmp_dpu(desc->filename[file], img->width, img->height, img->padding, img->mcu_width_real, desc->out_buffer);
+#ifdef STATISTICS
+							TIME_NOW(&stop_bmp);
+							printf("%2.5f - wrote bmp\n", TIME_DIFFERENCE(program_start, stop_bmp));
+#endif // STATISTICS
 						}
 
 						// free the memory of the descriptor
@@ -274,7 +334,8 @@ static int read_input_host(char *in_file, uint64_t length, char *buffer)
 	return n;
 }
 
-static int dpu_main(struct jpeg_options *opts) {
+static int dpu_main(struct jpeg_options *opts)
+{
 	char dpu_program_name[32];
 	struct dpu_set_t dpus, dpu_rank;
 	int status;
@@ -286,6 +347,7 @@ static int dpu_main(struct jpeg_options *opts) {
 
 #ifdef STATISTICS
 	struct timespec start_load, stop_load;
+	TIME_NOW(&program_start);
 #endif // STATISTICS
 
 	memset(&results, 0, sizeof(host_results));
@@ -330,12 +392,14 @@ static int dpu_main(struct jpeg_options *opts) {
 	while (remaining_file_count)
 	{
 		struct host_dpu_descriptor *rank_input;
-		uint8_t dpu_id=0;
+		uint8_t dpu_id;
 		uint32_t prepared_file_count;
 		uint8_t prepared_dpu_count=0;
+		uint32_t rank_in_length = 0;
 
 #ifdef STATISTICS
 		clock_gettime(CLOCK_MONOTONIC, &start_load);
+		printf("%2.5f - Starting load\n", TIME_DIFFERENCE(program_start, start_load));
 #endif // STATISTICS
 
 		// allocate a new set of descriptors to save the context of work to be
@@ -353,6 +417,7 @@ static int dpu_main(struct jpeg_options *opts) {
 		}
 
 		// fill descriptors by preparing files until the rank is full, or we run out
+		dpu_id = 0;
 		for (prepared_file_count = 0;
 			remaining_file_count;
 			remaining_file_count--, file_index++)
@@ -375,8 +440,6 @@ static int dpu_main(struct jpeg_options *opts) {
 			char *next;
 			for (dpus_searched=0; dpus_searched < dpus_per_rank; dpus_searched++)
 			{
-				dpu_id++;
-				dpu_id%=dpus_per_rank;
 				if (rank_input[dpu_id].file_count < MAX_FILES_PER_DPU &&
 					(rank_input[dpu_id].in_length + file_length < MAX_INPUT_LENGTH))
 				{
@@ -412,6 +475,7 @@ static int dpu_main(struct jpeg_options *opts) {
 					rank_input[dpu_id].in_length += file_length;// if we need alignment, do it here
  					prepared_file_count++;
 #ifdef STATISTICS
+					rank_in_length += file_length;
 					total_data_processed += file_length;
 #endif // STATISTICS
 					break;
@@ -421,12 +485,17 @@ static int dpu_main(struct jpeg_options *opts) {
 			// did we look at all possible DPUs and not find an empty place?
 			if (dpus_searched == dpus_per_rank)
 				break;
+
+			dpu_id++;
+			dpu_id%=dpus_per_rank;
 		}
 
 #ifdef STATISTICS
 		clock_gettime(CLOCK_MONOTONIC, &stop_load);
 		double load_time = TIME_DIFFERENCE(start_load, stop_load);
-		printf("[%u] %u loaded in %2.2f s\n", dpu_id, rank_input[dpu_id].in_length, load_time);
+		printf("%2.5f - %u bytes loaded in %2.5f s\n",
+			TIME_DIFFERENCE(program_start, stop_load),
+			rank_in_length, load_time);
 #endif // STATISTICS
 
 		dbg_printf("Prepared %u files in %u DPUs\n", prepared_file_count, prepared_dpu_count);
@@ -435,6 +504,7 @@ static int dpu_main(struct jpeg_options *opts) {
 		{
 			while (rank_status == ALL_RANKS)
 			{
+				dbg_printf("waiting for free rank\n");
 				int ret = check_for_completed_rank(dpus, &rank_status, ctx, &results);
 				if (ret == -2)
 				{
@@ -453,6 +523,7 @@ static int dpu_main(struct jpeg_options *opts) {
 					dbg_printf("Submitted to rank %u status=%s\n", rank_id, to_bin(rank_status, rank_count));
 #ifdef STATISTICS
 					clock_gettime(CLOCK_MONOTONIC, &ctx[rank_id].start_rank);
+					printf("%2.5f - launching rank %u\n", TIME_DIFFERENCE(program_start, ctx[rank_id].start_rank), rank_id);
 #endif // STATISTICS
 					ctx[rank_id].dpus = rank_input;
 					ctx[rank_id].dpu_count = prepared_dpu_count;

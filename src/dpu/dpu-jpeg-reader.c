@@ -1,7 +1,7 @@
 #include <mram.h>
 #include <stdio.h>
 
-#include "jpeg-host.h"
+#include "jpeg-common.h"
 #include "dpu-jpeg.h"
 
 __mram_noinit char file_buffer[MAX_INPUT_LENGTH];

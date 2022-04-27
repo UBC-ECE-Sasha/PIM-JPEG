@@ -1,7 +1,11 @@
 #ifndef _JPEG_HOST__H
 #define _JPEG_HOST__H
 
+/* Definitions specific to the host (CPU) that cannot be shared by the DPU */
+
 #include "common.h"
+#include "jpeg-common.h"
+#include <time.h>
 
 #ifndef MAX_FILES_PER_DPU
 #define MAX_FILES_PER_DPU 64
@@ -11,16 +15,7 @@
 #define NR_TASKLETS 16
 #endif
 
-#define MAX_INPUT_LENGTH MEGABYTE(16)
-#define MAX_DECODED_DATA_SIZE MEGABYTE(32)
-
 enum { PROG_OK = 0, PROG_INVALID_INPUT, PROG_BUFFER_TOO_SMALL, PROG_OUTPUT_ERROR, PROG_FAULT };
-
-enum
-{
-	OPTION_FLAG_HORIZONTAL_FLIP,
-	OPTION_FLAG_TEST_SCALABILITY,			// enable selection of a specific number of DPUs/input files
-};
 
 struct jpeg_options {
   uint32_t scale;     /* percent scaling of the image */
@@ -48,23 +43,6 @@ typedef struct dpu_settings_t {
   uint64_t file_length;
   char *filename;
 } dpu_settings_t;
-
-typedef struct dpu_inputs_t
-{
-	uint32_t file_length;
-	uint32_t scale_width;
-	uint32_t flags;					// see OPTION_FLAG_
-	uint32_t padding;
-} dpu_inputs_t __attribute__((aligned(8)));
-
-typedef struct dpu_output_t {
-  uint16_t width;
-  uint16_t height;
-  uint32_t padding;
-  uint32_t mcu_width_real;
-  uint32_t sum_rgb[3];
-	uint32_t length;		// total length of data buffer, in bytes
-} dpu_output_t __attribute__((aligned(8)));
 
 typedef struct host_results
 {

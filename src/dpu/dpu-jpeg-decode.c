@@ -1,11 +1,13 @@
 #include <mram.h>
 #include <mutex.h>
 #include <stdio.h>
+#include <perfcounter.h>
 
-#include "jpeg-host.h"
+#include "jpeg-common.h"
 #include "dpu-jpeg.h"
 
 __mram_noinit short MCU_buffer[NR_TASKLETS][MEGABYTE(16) / NR_TASKLETS];
+extern dpu_output_t output;
 
 #define PREWRITE_SIZE 768
 __dma_aligned short MCU_buffer_cache[NR_TASKLETS][PREWRITE_SIZE];
@@ -151,6 +153,7 @@ static void concat_adjust_mcus(JpegDecompressor *d, int row, int col) {
     return;
   }
 
+	uint32_t start_dc_adj = perfcounter_get();
   int tasklet_index = 1;
   int start_index = jpegInfoDpu.mcu_start_index[tasklet_index] / 192;
   int tasklet_row = start_index / jpegInfo.mcu_width_real;
@@ -189,12 +192,19 @@ static void concat_adjust_mcus(JpegDecompressor *d, int row, int col) {
     }
     col = 0;
   }
+	output.cycles_dc_adj = perfcounter_get() - start_dc_adj;
 }
 
 static int decode_mcu(JpegDecompressor *d, int component_index, short *previous_dc) {
   QuantizationTable *q_table = &jpegInfo.quant_tables[jpegInfo.color_components[component_index].quant_table_id];
   HuffmanTable *dc_table = &jpegInfo.dc_huffman_tables[jpegInfo.color_components[component_index].dc_huffman_table_id];
   HuffmanTable *ac_table = &jpegInfo.ac_huffman_tables[jpegInfo.color_components[component_index].ac_huffman_table_id];
+
+#ifdef STATISTICS
+// add mutex
+	output.mcu_decode_tries++;
+	uint32_t start = perfcounter_get();
+#endif // STATISTICS
 
   // Get DC value for this MCU block
   uint8_t dc_length = huff_decode(d, dc_table);
@@ -214,6 +224,11 @@ static int decode_mcu(JpegDecompressor *d, int component_index, short *previous_
   }
   MCU_buffer_cache[d->tasklet_id][0] = coeff + *previous_dc;
   *previous_dc = MCU_buffer_cache[d->tasklet_id][0];
+#ifdef STATISTICS
+	uint32_t decode = perfcounter_get();
+	output.cycles_mcu_decode += decode - start;
+#endif // STATISTICS
+
   // Dequantization
   MCU_buffer_cache[d->tasklet_id][0] *= q_table->table[0];
 
@@ -267,6 +282,10 @@ static int decode_mcu(JpegDecompressor *d, int component_index, short *previous_
       i++;
     }
   }
+
+#ifdef STATISTICS
+	output.cycles_mcu_dequant += perfcounter_get() - decode;
+#endif // STATISTICS
 
   return 0;
 }
@@ -348,8 +367,16 @@ void inverse_dct_convert(JpegDecompressor *d) {
             int cache_index = ((y << 8) + (y << 7)) + ((x << 7) + (x << 6)) + (color_index << 6);
             mram_read(&MCU_buffer[0][mcu_index], &MCU_buffer_cache[d->tasklet_id][cache_index], MCU_READ_WRITE_SIZE0);
 
+#ifdef STATISTICS
+				uint32_t start_idct = perfcounter_get();
+#endif // STATISTICS
+
             // Compute inverse DCT with ANN algorithm
             inverse_dct_component(d, cache_index);
+
+#ifdef STATISTICS
+				output.cycles_idct += perfcounter_get() - start_idct;
+#endif // STATISTICS
           }
         }
       }
@@ -362,7 +389,15 @@ void inverse_dct_convert(JpegDecompressor *d) {
           int mcu_index = (((row + y) * jpegInfo.mcu_width_real + (col + x)) * 3) << 6;
           int cache_index = ((y << 8) + (y << 7)) + ((x << 7) + (x << 6));
 
+#ifdef STATISTICS
+				uint32_t start_cc = perfcounter_get();
+#endif // STATISTICS
+
           ycbcr_to_rgb_pixel(d, cache_index, y, x);
+
+#ifdef STATISTICS
+				output.cycles_cc += perfcounter_get() - start_cc;
+#endif //STATISTICS
 
           mram_write(&MCU_buffer_cache[d->tasklet_id][cache_index], &MCU_buffer[0][mcu_index], MCU_READ_WRITE_SIZE1);
         }

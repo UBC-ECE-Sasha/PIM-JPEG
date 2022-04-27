@@ -8,6 +8,10 @@ ifeq ($(DEBUG), 1)
 	CFLAGS+=-DDEBUG
 endif
 
+ifeq ($(STATS), 1)
+	CFLAGS+=-DSTATISTICS
+endif
+
 SOURCE = jpeg-dpu.c dpu-jpeg-reader.c dpu-jpeg-marker.c dpu-jpeg-decode.c $(wildcard markers/*.c)
 
 .PHONY: clean
