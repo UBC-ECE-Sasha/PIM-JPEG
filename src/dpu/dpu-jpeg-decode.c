@@ -192,7 +192,9 @@ static void concat_adjust_mcus(JpegDecompressor *d, int row, int col) {
     }
     col = 0;
   }
+#ifdef STATISTICS
 	output.cycles_dc_adj = perfcounter_get() - start_dc_adj;
+#endif // STATISTICS
 }
 
 static int decode_mcu(JpegDecompressor *d, int component_index, short *previous_dc) {
