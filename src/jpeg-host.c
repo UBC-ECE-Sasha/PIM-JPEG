@@ -104,7 +104,7 @@ void scale_rank(struct dpu_set_t dpu_rank, host_rank_context *desc, struct jpeg_
 	DPU_ASSERT(dpu_launch(dpu_rank, DPU_ASYNCHRONOUS));
 }
 
-int read_results_dpu_rank(struct dpu_set_t dpu_rank, struct host_rank_context *rank_ctx, uint32_t rank_id)
+int read_results_dpu_rank(struct dpu_set_t dpu_rank, struct host_rank_context *rank_ctx)
 {
 	struct dpu_set_t dpu;
 	uint8_t dpu_id;
@@ -113,7 +113,7 @@ int read_results_dpu_rank(struct dpu_set_t dpu_rank, struct host_rank_context *r
 	struct timespec results_start;
 	clock_gettime(CLOCK_MONOTONIC, &results_start);
 	printf("%2.5f - rank %u done in %2.5f s\n",
-		TIME_DIFFERENCE(program_start, results_start), rank_id,
+		TIME_DIFFERENCE(program_start, results_start), rank_ctx->rank_id,
 		TIME_DIFFERENCE(rank_ctx->start_rank, results_start));
 #endif // STATISTICS
 
@@ -262,7 +262,7 @@ int check_for_completed_rank(struct dpu_set_t dpus, uint64_t* rank_status, struc
 			{
 				*rank_status &= ~((uint64_t)1<<rank_id);
 				dbg_printf("Reading results from rank %u status %s\n", rank_id, to_bin(*rank_status, rank_count));
-				read_results_dpu_rank(dpu_rank, rank_ctx, rank_id);
+				read_results_dpu_rank(dpu_rank, rank_ctx);
 
 				// aggregate statistics
 				for (dpu_id=0; dpu_id < rank_ctx->dpu_count; dpu_id++)
@@ -395,7 +395,9 @@ static int dpu_main(struct jpeg_options *opts)
 		uint8_t dpu_id;
 		uint32_t prepared_file_count;
 		uint8_t prepared_dpu_count=0;
+#ifdef STATISTICS
 		uint32_t rank_in_length = 0;
+#endif // STATISTICS
 
 #ifdef STATISTICS
 		clock_gettime(CLOCK_MONOTONIC, &start_load);
@@ -524,6 +526,7 @@ static int dpu_main(struct jpeg_options *opts)
 #ifdef STATISTICS
 					clock_gettime(CLOCK_MONOTONIC, &ctx[rank_id].start_rank);
 					printf("%2.5f - launching rank %u\n", TIME_DIFFERENCE(program_start, ctx[rank_id].start_rank), rank_id);
+					ctx[rank_id].rank_id = rank_id;
 #endif // STATISTICS
 					ctx[rank_id].dpus = rank_input;
 					ctx[rank_id].dpu_count = prepared_dpu_count;

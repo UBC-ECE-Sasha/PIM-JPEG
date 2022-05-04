@@ -69,6 +69,7 @@ typedef struct host_rank_context {
   host_dpu_descriptor *dpus; // the descriptors for the dpus in this rank
 #ifdef STATISTICS
   struct timespec start_rank;
+	uint32_t rank_id;				// which physical rank this task was assigned to
 #endif // STATISTICS
 } host_rank_context;
 
