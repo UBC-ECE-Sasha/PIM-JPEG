@@ -28,6 +28,7 @@
 
 #define TIME_NOW(_t) (clock_gettime(CLOCK_MONOTONIC, (_t)))
 #define CYCLES_PER_NS (800.0 / 3 * 1000 * 1000)
+#define MAX_DPU_PER_RANK 64
 
 const char options[] = "cdm:r:s:w:fS";
 static uint32_t rank_count, dpu_count;
@@ -337,7 +338,7 @@ static int read_input_host(char *in_file, uint64_t length, char *buffer)
 static int dpu_main(struct jpeg_options *opts)
 {
 	char dpu_program_name[32];
-	struct dpu_set_t dpus, dpu_rank;
+	struct dpu_set_t dpus, dpu_rank, dpu;
 	int status;
 	uint8_t rank_id;
 	uint64_t rank_status = 0; // bitmap indicating if the rank is busy or free
@@ -408,14 +409,17 @@ static int dpu_main(struct jpeg_options *opts)
 		// done by a rank. We don't know exactly which rank hardware will be
 		// used to do the work yet, but we will find one later, once the work
 		// is ready.
-		rank_input = calloc(dpus_per_rank, sizeof(struct host_dpu_descriptor));
+		rank_input = calloc(MAX_DPU_PER_RANK, sizeof(struct host_dpu_descriptor));
 
 		// prepare empty work descriptor for each DPU
-		for (dpu_id=0; dpu_id < dpus_per_rank; dpu_id++)
+		DPU_RANK_FOREACH(dpus, dpu_rank)
 		{
-			rank_input[dpu_id].file_count = 0;
-			rank_input[dpu_id].in_length = 0;
-			rank_input[dpu_id].in_buffer = malloc(MAX_INPUT_LENGTH);
+			DPU_FOREACH(dpu_rank, dpu, dpu_id)
+			{
+				rank_input[dpu_id].file_count = 0;
+				rank_input[dpu_id].in_length = 0;
+				rank_input[dpu_id].in_buffer = malloc(MAX_INPUT_LENGTH);
+			}
 		}
 
 		// fill descriptors by preparing files until the rank is full, or we run out
