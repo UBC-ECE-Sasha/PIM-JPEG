@@ -353,12 +353,24 @@ static int dpu_main(struct jpeg_options *opts)
 
 	memset(&results, 0, sizeof(host_results));
 
+#ifdef STATISTICS
+	struct timespec stop_memset;
+	TIME_NOW(&stop_memset);
+	printf("%2.5f - memory cleared\n", TIME_DIFFERENCE(program_start, stop_memset));
+#endif // STATISTICS
+
 	// allocate all of the DPUS up-front, then check to see how many we got
 	status = dpu_alloc(DPU_ALLOCATE_ALL, NULL, &dpus);
 	if (status != DPU_OK) {
 		fprintf(stderr, "Error %i allocating DPUs\n", status);
 		return -3;
 	}
+
+#ifdef STATISTICS
+	struct timespec stop_alloc;
+	TIME_NOW(&stop_alloc);
+	printf("%2.5f - allocated\n", TIME_DIFFERENCE(program_start, stop_alloc));
+#endif // STATISTICS
 
 	dpu_get_nr_ranks(dpus, &rank_count);
 	dpu_get_nr_dpus(dpus, &dpu_count);
