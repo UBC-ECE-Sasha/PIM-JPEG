@@ -4,6 +4,11 @@ CFLAGS = --std=c99 -O3 -g -Wall -Wextra -I $(IDIR) -I ./PIM-common/common/includ
 DPU_OPTS = `dpu-pkg-config --cflags --libs dpu`
 
 # define DEBUG in the source if we are debugging
+ifeq ($(DEBUG), 1)
+	DEBUG_CPU=1
+	DEBUG_DPU=1
+endif
+
 ifeq ($(DEBUG_CPU), 1)
 	CFLAGS+=-DDEBUG
 endif
